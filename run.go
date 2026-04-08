@@ -11,6 +11,7 @@ import (
 
 	"github.com/Limetric/hostmux/internal/childproc"
 	"github.com/Limetric/hostmux/internal/daemon"
+	"github.com/Limetric/hostmux/internal/hostnames"
 	"github.com/Limetric/hostmux/internal/sockpath"
 	"github.com/Limetric/hostmux/internal/sockproto"
 	"github.com/Limetric/hostmux/internal/worktree"
@@ -19,10 +20,11 @@ import (
 func cmdRun(args []string) int {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	socketFlag := fs.String("socket", "", "override Unix socket path")
+	domainFlag := fs.String("domain", "", "expand bare subdomains using this base domain")
 	prefixFlag := fs.String("prefix", "", "explicit hostname prefix (overrides worktree detection)")
 	noPrefix := fs.Bool("no-prefix", false, "disable worktree auto-prefixing")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: hostmux run HOSTS [--socket PATH] [--prefix NAME | --no-prefix] -- COMMAND [ARGS...]\n")
+		fmt.Fprintf(os.Stderr, "usage: hostmux run HOSTS [--socket PATH] [--domain DOMAIN] [--prefix NAME | --no-prefix] -- COMMAND [ARGS...]\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -59,6 +61,7 @@ func cmdRun(args []string) int {
 			hosts[i] = prefix + "-" + h
 		}
 	}
+	domain := hostnames.NormalizeDomain(*domainFlag)
 
 	// Resolve socket path and ensure daemon is running.
 	sockOpts := sockpath.Options{Flag: *socketFlag}
@@ -98,6 +101,27 @@ func cmdRun(args []string) int {
 	defer conn.Close()
 	enc := sockproto.NewEncoder(conn)
 	dec := sockproto.NewDecoder(conn)
+	if hostnames.HasBare(hosts) && domain == "" {
+		if err := enc.Encode(&sockproto.Message{Op: sockproto.OpInfo}); err != nil {
+			fmt.Fprintf(os.Stderr, "hostmux run: info: %v\n", err)
+			return 1
+		}
+		resp, err := dec.Decode()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "hostmux run: info response: %v\n", err)
+			return 1
+		}
+		if resp.Ok {
+			domain = hostnames.NormalizeDomain(resp.Domain)
+		} else {
+			fmt.Fprintf(os.Stderr, "hostmux run: daemon rejected info lookup; using bare hosts unchanged")
+			if resp.Error != "" {
+				fmt.Fprintf(os.Stderr, " (%s)", resp.Error)
+			}
+			fmt.Fprintln(os.Stderr)
+		}
+	}
+	hosts = hostnames.Expand(hosts, domain)
 	upstream := fmt.Sprintf("http://127.0.0.1:%d", port)
 	if err := enc.Encode(&sockproto.Message{Op: sockproto.OpRegister, Hosts: hosts, Upstream: upstream}); err != nil {
 		fmt.Fprintf(os.Stderr, "hostmux run: register: %v\n", err)

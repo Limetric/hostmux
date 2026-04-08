@@ -14,6 +14,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/fsnotify/fsnotify"
 
+	"github.com/Limetric/hostmux/internal/hostnames"
 	"github.com/Limetric/hostmux/internal/router"
 )
 
@@ -23,6 +24,7 @@ const DefaultTLSListen = ":8443"
 type Config struct {
 	Listen string    `toml:"listen"`
 	Socket string    `toml:"socket"`
+	Domain string    `toml:"domain"`
 	TLS    *TLSBlock `toml:"tls"`
 	Apps   []App     `toml:"app"`
 }
@@ -47,6 +49,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("config: parse %s: %w", path, err)
 	}
 	cfg.applyDefaults()
+	cfg.normalize()
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
@@ -59,6 +62,13 @@ func (c *Config) applyDefaults() {
 	}
 	if c.TLS != nil && c.TLS.Listen == "" {
 		c.TLS.Listen = c.Listen
+	}
+}
+
+func (c *Config) normalize() {
+	c.Domain = hostnames.NormalizeDomain(c.Domain)
+	for i := range c.Apps {
+		c.Apps[i].Hosts = hostnames.Expand(c.Apps[i].Hosts, c.Domain)
 	}
 }
 
