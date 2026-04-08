@@ -6,8 +6,7 @@ on:
 
 jobs:
   opencode-review:
-    if: >
-      (github.event.pull_request.draft == false)
+    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -61,4 +60,4 @@ jobs:
 
             Use `gh pr view`, `gh pr diff`, and other read-only `gh pr` commands as needed to inspect prior feedback.
 
-            Do not post to GitHub yourself (no `gh pr comment`, no review or issue APIs): this workflow publishes your final message as the PR comment. Put the full review in your last reply only
+            Do not post to GitHub yourself (no `gh pr comment`, no review or issue APIs): this workflow publishes your final message as the PR comment. Put the full review in your last reply only.
