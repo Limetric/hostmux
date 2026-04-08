@@ -1,0 +1,54 @@
+name: OpenCode Review
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize, labeled]
+
+jobs:
+  opencode-review:
+    if: github.event.action != 'labeled' || github.event.label.name == 'trigger:review'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - uses: anomalyco/opencode/github@latest
+        id: review
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          model: opencode-go/glm-5
+          prompt: |
+            Review this pull request.
+
+            Before leaving feedback:
+            - Read the PR description and existing PR comments or review feedback.
+            - Use recent commit history and the current diff to understand what changed since earlier review rounds.
+            - Treat previously addressed comments as resolved unless the underlying issue is still present in the current code.
+
+            Focus on:
+            - Newly introduced bugs or regressions
+            - Unresolved review feedback that still applies
+            - Code quality issues in the current diff
+
+            Do not repeat comments that were already addressed in later commits unless the problem remains.
+
+      - name: Remove trigger:review label
+        if: github.event.action == 'labeled'
+        run: gh pr edit ${{ github.event.pull_request.number }} --remove-label 'trigger:review' || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

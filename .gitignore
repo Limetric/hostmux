@@ -30,3 +30,21 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude
+/.claude/settings.local.json
+
+# Worktrees
+/.worktrees/
+/.claude/worktrees/
+
+# Superpowers
+/docs/superpowers/specs/
+/docs/superpowers/plans/
+
+# Superset
+/.superset/attachments/
