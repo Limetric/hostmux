@@ -2,10 +2,14 @@ package tlsconfig
 
 import (
 	"crypto/tls"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Limetric/hostmux/internal/config"
 )
@@ -48,6 +52,32 @@ func TestResolveHonorsOverrides(t *testing.T) {
 		t.Fatalf("cert = %q", cfg.CertFile)
 	}
 	if !strings.HasSuffix(cfg.KeyFile, filepath.Join("certs", "dev.key")) {
+		t.Fatalf("key = %q", cfg.KeyFile)
+	}
+}
+
+func TestResolveWithExplicitAbsolutePathsDoesNotNeedHomeDir(t *testing.T) {
+	oldHomeDir := userHomeDir
+	userHomeDir = func() (string, error) {
+		return "", errors.New("home unavailable")
+	}
+	t.Cleanup(func() { userHomeDir = oldHomeDir })
+
+	cfg, err := Resolve(&config.TLSBlock{
+		Listen: ":9443",
+		Cert:   "/tmp/hostmux.crt",
+		Key:    "/tmp/hostmux.key",
+	})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if cfg.Listen != ":9443" {
+		t.Fatalf("listen = %q", cfg.Listen)
+	}
+	if cfg.CertFile != "/tmp/hostmux.crt" {
+		t.Fatalf("cert = %q", cfg.CertFile)
+	}
+	if cfg.KeyFile != "/tmp/hostmux.key" {
 		t.Fatalf("key = %q", cfg.KeyFile)
 	}
 }
@@ -116,8 +146,12 @@ func TestEnsurePairRejectsPartialState(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := EnsurePair(cfg); err == nil {
+	err := EnsurePair(cfg)
+	if err == nil {
 		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), cfg.CertFile) || !strings.Contains(err.Error(), cfg.KeyFile) {
+		t.Fatalf("error = %q", err)
 	}
 }
 
@@ -140,5 +174,52 @@ func TestEnsurePairRejectsInvalidExistingPair(t *testing.T) {
 
 	if err := EnsurePair(cfg); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestEnsurePairSerializesConcurrentGeneration(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{
+		Listen:   ":8443",
+		CertFile: filepath.Join(dir, "tls", "hostmux.crt"),
+		KeyFile:  filepath.Join(dir, "tls", "hostmux.key"),
+	}
+
+	var generateCalls int32
+	oldBeforeGenerate := beforeGeneratePair
+	oldGeneratePair := generatePair
+	beforeGeneratePair = func() {
+		time.Sleep(100 * time.Millisecond)
+	}
+	generatePair = func() ([]byte, []byte, error) {
+		atomic.AddInt32(&generateCalls, 1)
+		return oldGeneratePair()
+	}
+	t.Cleanup(func() {
+		beforeGeneratePair = oldBeforeGenerate
+		generatePair = oldGeneratePair
+	})
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- EnsurePair(cfg)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("EnsurePair: %v", err)
+		}
+	}
+	if got := atomic.LoadInt32(&generateCalls); got != 1 {
+		t.Fatalf("generate calls = %d, want 1", got)
+	}
+	if _, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile); err != nil {
+		t.Fatalf("LoadX509KeyPair: %v", err)
 	}
 }

@@ -38,6 +38,7 @@ More useful commands:
 ## Behind cloudflared
 
 By default, `hostmux serve` listens on `:8443`, generates a self-signed certificate if needed, and stores it at `~/.hostmux/tls/hostmux.crt` and `~/.hostmux/tls/hostmux.key`.
+If that managed certificate expires or you want a fresh one, remove `~/.hostmux/tls/` and restart `hostmux serve`.
 
 If you want HTTP/2 multiplexing on the tunnel-to-origin hop, point `cloudflared` at the default HTTPS listener:
 

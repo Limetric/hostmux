@@ -1,5 +1,5 @@
 // Package listener builds the HTTP servers the hostmux daemon listens on.
-// Always returns a plain HTTP/1.1 + h2c listener for direct clients.
+// Optionally returns a plain HTTP/1.1 + h2c listener for direct clients.
 // Optionally also returns a TLS listener that negotiates HTTP/2 via ALPN for
 // origins such as cloudflared that require HTTPS for HTTP/2-to-origin.
 package listener
@@ -20,7 +20,7 @@ type Config struct {
 	TLS *TLSConfig
 }
 
-// TLSConfig configures the optional TLS listener.
+// TLSConfig configures the TLS listener.
 type TLSConfig struct {
 	Listen   string
 	CertFile string

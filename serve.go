@@ -156,16 +156,10 @@ func cmdServe(args []string) int {
 	defer cancel()
 
 	// Start HTTP servers.
-	for i, srv := range servers {
+	for _, srv := range servers {
 		srv := srv
-		isTLS := i == len(servers)-1 && tlsCfg != nil
 		go func() {
-			var serr error
-			if isTLS {
-				serr = srv.ListenAndServeTLS(tlsCfg.CertFile, tlsCfg.KeyFile)
-			} else {
-				serr = srv.ListenAndServe()
-			}
+			serr := srv.ListenAndServeTLS(tlsCfg.CertFile, tlsCfg.KeyFile)
 			if serr != nil && serr != http.ErrServerClosed {
 				log.Printf("http server: %v", serr)
 				cancel()

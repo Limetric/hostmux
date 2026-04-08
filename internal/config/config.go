@@ -17,6 +17,8 @@ import (
 	"github.com/Limetric/hostmux/internal/router"
 )
 
+const DefaultTLSListen = ":8443"
+
 // Config is the parsed TOML config file.
 type Config struct {
 	Listen string    `toml:"listen"`
@@ -25,7 +27,7 @@ type Config struct {
 	Apps   []App     `toml:"app"`
 }
 
-// TLSBlock configures the optional TLS listener.
+// TLSBlock configures the TLS listener.
 type TLSBlock struct {
 	Listen string `toml:"listen"`
 	Cert   string `toml:"cert"`
@@ -53,7 +55,7 @@ func Load(path string) (*Config, error) {
 
 func (c *Config) applyDefaults() {
 	if c.Listen == "" {
-		c.Listen = ":8443"
+		c.Listen = DefaultTLSListen
 	}
 	if c.TLS != nil && c.TLS.Listen == "" {
 		c.TLS.Listen = c.Listen

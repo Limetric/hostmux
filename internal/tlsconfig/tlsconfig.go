@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Limetric/hostmux/internal/config"
+	"golang.org/x/sys/unix"
 )
 
 type Config struct {
@@ -25,13 +26,17 @@ type Config struct {
 	KeyFile  string
 }
 
+var (
+	userHomeDir        = os.UserHomeDir
+	beforeGeneratePair = func() {}
+	generatePair       = generateSelfSignedPair
+)
+
 func Resolve(block *config.TLSBlock) (Config, error) {
-	cfg, err := defaultConfig()
-	if err != nil {
-		return Config{}, err
-	}
+	cfg := Config{Listen: config.DefaultTLSListen}
+	var err error
 	if block == nil {
-		return cfg, nil
+		return fillManagedPaths(cfg)
 	}
 	if block.Listen != "" {
 		cfg.Listen = block.Listen
@@ -48,10 +53,16 @@ func Resolve(block *config.TLSBlock) (Config, error) {
 			return Config{}, err
 		}
 	}
-	return cfg, nil
+	return fillManagedPaths(cfg)
 }
 
 func EnsurePair(cfg Config) error {
+	lock, err := acquirePairLock(cfg)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+
 	certExists := fileExists(cfg.CertFile)
 	keyExists := fileExists(cfg.KeyFile)
 
@@ -59,21 +70,21 @@ func EnsurePair(cfg Config) error {
 	case certExists && keyExists:
 		_, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
 		if err != nil {
-			return fmt.Errorf("load existing keypair: %w", err)
+			return fmt.Errorf("load existing keypair %s %s: %w", cfg.CertFile, cfg.KeyFile, err)
 		}
 		return nil
 	case certExists != keyExists:
-		return fmt.Errorf("partial tls state: cert=%t key=%t", certExists, keyExists)
+		return fmt.Errorf("partial tls state: cert=%s exists=%t key=%s exists=%t", cfg.CertFile, certExists, cfg.KeyFile, keyExists)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(cfg.CertFile), 0o700); err != nil {
-		return fmt.Errorf("create tls dir: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(cfg.KeyFile), 0o700); err != nil {
-		return fmt.Errorf("create tls dir: %w", err)
+	for _, dir := range uniqueDirs(filepath.Dir(cfg.CertFile), filepath.Dir(cfg.KeyFile)) {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return fmt.Errorf("create tls dir %s: %w", dir, err)
+		}
 	}
 
-	certPEM, keyPEM, err := generateSelfSignedPair()
+	beforeGeneratePair()
+	certPEM, keyPEM, err := generatePair()
 	if err != nil {
 		return err
 	}
@@ -84,29 +95,41 @@ func EnsurePair(cfg Config) error {
 		return fmt.Errorf("write key: %w", err)
 	}
 	if _, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile); err != nil {
-		return fmt.Errorf("load generated keypair: %w", err)
+		return fmt.Errorf("load generated keypair %s %s: %w", cfg.CertFile, cfg.KeyFile, err)
 	}
 	return nil
 }
 
-func defaultConfig() (Config, error) {
-	home, err := os.UserHomeDir()
+func fillManagedPaths(cfg Config) (Config, error) {
+	base, err := managedTLSDir()
 	if err != nil {
+		if cfg.CertFile != "" && cfg.KeyFile != "" {
+			return cfg, nil
+		}
 		return Config{}, err
 	}
-	base := filepath.Join(home, ".hostmux", "tls")
-	return Config{
-		Listen:   ":8443",
-		CertFile: filepath.Join(base, "hostmux.crt"),
-		KeyFile:  filepath.Join(base, "hostmux.key"),
-	}, nil
+	if cfg.CertFile == "" {
+		cfg.CertFile = filepath.Join(base, "hostmux.crt")
+	}
+	if cfg.KeyFile == "" {
+		cfg.KeyFile = filepath.Join(base, "hostmux.key")
+	}
+	return cfg, nil
+}
+
+func managedTLSDir() (string, error) {
+	home, err := userHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".hostmux", "tls"), nil
 }
 
 func expandHome(p string) (string, error) {
 	if !strings.HasPrefix(p, "~/") {
 		return p, nil
 	}
-	home, err := os.UserHomeDir()
+	home, err := userHomeDir()
 	if err != nil {
 		return "", err
 	}
@@ -116,6 +139,35 @@ func expandHome(p string) (string, error) {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func acquirePairLock(cfg Config) (*os.File, error) {
+	lockPath := cfg.CertFile + ".lock"
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
+		return nil, fmt.Errorf("create tls lock dir: %w", err)
+	}
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open tls lock: %w", err)
+	}
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("lock tls pair: %w", err)
+	}
+	return f, nil
+}
+
+func uniqueDirs(dirs ...string) []string {
+	seen := make(map[string]struct{}, len(dirs))
+	out := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		if _, ok := seen[dir]; ok {
+			continue
+		}
+		seen[dir] = struct{}{}
+		out = append(out, dir)
+	}
+	return out
 }
 
 func generateSelfSignedPair() ([]byte, []byte, error) {
