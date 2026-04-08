@@ -1,6 +1,7 @@
 // Package daemonctl provides helpers to stop a running hostmux daemon.
-// Both the `hostmux stop` subcommand and `hostmux serve --force` route
-// through Stop so their shutdown semantics stay identical.
+// Both the `hostmux stop` subcommand and daemon takeover flows such as
+// `hostmux start --force` route through Stop so their shutdown semantics
+// stay identical.
 package daemonctl
 
 import (

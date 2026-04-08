@@ -1,5 +1,5 @@
 // Package daemon contains the auto-spawn helper used by `hostmux run` when
-// the Unix socket is missing. It forks `hostmux serve` detached (its own
+// the Unix socket is missing. It forks `hostmux start --foreground` detached (its own
 // session) so the daemon outlives the parent, redirects stdout/stderr to
 // ~/.hostmux/hostmux.log, and polls the socket path until it comes up or
 // the supplied context expires.
@@ -19,7 +19,7 @@ import (
 // EnsureOpts allows tests to inject a fake Spawn function.
 type EnsureOpts struct {
 	// Spawn is called when the socket file is missing. If nil, the real
-	// implementation forks `hostmux serve` detached.
+	// implementation forks `hostmux start --foreground` detached.
 	Spawn func() error
 }
 
@@ -32,7 +32,7 @@ func EnsureRunning(ctx context.Context, sockPath string, opts EnsureOpts) error 
 	}
 	spawn := opts.Spawn
 	if spawn == nil {
-		spawn = forkHostmuxServe
+		spawn = defaultSpawn
 	}
 	if err := spawn(); err != nil {
 		return fmt.Errorf("daemon: spawn: %w", err)
@@ -51,9 +51,13 @@ func EnsureRunning(ctx context.Context, sockPath string, opts EnsureOpts) error 
 	}
 }
 
-// forkHostmuxServe forks `<self> serve` detached, with stdout/stderr to
+func defaultSpawn() error {
+	return SpawnDetached("start", "--foreground")
+}
+
+// SpawnDetached forks `<self> <args...>` detached, with stdout/stderr to
 // ~/.hostmux/hostmux.log.
-func forkHostmuxServe() error {
+func SpawnDetached(args ...string) error {
 	self, err := os.Executable()
 	if err != nil {
 		return err
@@ -71,7 +75,7 @@ func forkHostmuxServe() error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(self, "serve")
+	cmd := exec.Command(self, args...)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	cmd.Stdin = nil

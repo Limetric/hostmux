@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -60,7 +61,7 @@ func TestEndToEnd(t *testing.T) {
 	// 5. Spawn the daemon.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	daemonCmd := exec.CommandContext(ctx, bin, "serve", "--config", cfgPath, "--socket", sockPath)
+	daemonCmd := exec.CommandContext(ctx, bin, "start", "--foreground", "--config", cfgPath, "--socket", sockPath)
 	daemonCmd.Env = env
 	daemonCmd.Stdout = testWriter{t}
 	daemonCmd.Stderr = testWriter{t}
@@ -334,6 +335,95 @@ func TestStopIdempotent(t *testing.T) {
 	}
 }
 
+func TestStartDetached(t *testing.T) {
+	env, _ := isolatedHostmuxEnv(t)
+
+	binDir := t.TempDir()
+	bin := filepath.Join(binDir, "hostmux")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+
+	sockDir, err := os.MkdirTemp("", "hm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(sockDir) })
+	sockPath := filepath.Join(sockDir, "t.sock")
+
+	cfgPath := filepath.Join(binDir, "hostmux.toml")
+	if err := os.WriteFile(cfgPath, []byte("listen = \"127.0.0.1:0\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	start := exec.Command(bin, "start", "--config", cfgPath, "--socket", sockPath)
+	start.Env = env
+	if out, err := start.CombinedOutput(); err != nil {
+		t.Fatalf("start: %v\n%s", err, out)
+	}
+
+	waitForSocket(t, sockPath, 5*time.Second)
+
+	stop := exec.Command(bin, "stop", "--socket", sockPath)
+	stop.Env = env
+	out, err := stop.CombinedOutput()
+	if err != nil {
+		t.Fatalf("stop: %v\n%s", err, out)
+	}
+	if !containsSubstring(string(out), "stopped daemon") {
+		t.Fatalf("expected 'stopped daemon' line, got: %s", out)
+	}
+	waitForSocketGone(t, sockPath, 3*time.Second)
+}
+
+func TestStartForeground(t *testing.T) {
+	env, _ := isolatedHostmuxEnv(t)
+
+	binDir := t.TempDir()
+	bin := filepath.Join(binDir, "hostmux")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+
+	sockDir, err := os.MkdirTemp("", "hm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(sockDir) })
+	sockPath := filepath.Join(sockDir, "t.sock")
+
+	cfgPath := filepath.Join(binDir, "hostmux.toml")
+	if err := os.WriteFile(cfgPath, []byte("listen = \"127.0.0.1:0\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "start", "--foreground", "--config", cfgPath, "--socket", sockPath)
+	cmd.Env = env
+	cmd.Stdout = testWriter{t}
+	cmd.Stderr = testWriter{t}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start --foreground: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+
+	waitForSocket(t, sockPath, 5*time.Second)
+
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("signal start --foreground: %v", err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("wait start --foreground: %v", err)
+	}
+	waitForSocketGone(t, sockPath, 3*time.Second)
+}
+
 func TestServeForce(t *testing.T) {
 	bin, sockPath, env, firstWait, cleanup := startDaemonForStopTest(t)
 	defer cleanup()
@@ -418,7 +508,7 @@ func TestStopFallsBackFromStaleDiscovery(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	daemonCmd := exec.CommandContext(ctx, bin, "serve", "--config", cfgPath)
+	daemonCmd := exec.CommandContext(ctx, bin, "start", "--foreground", "--config", cfgPath)
 	daemonCmd.Env = env
 	daemonCmd.Stdout = testWriter{t}
 	daemonCmd.Stderr = testWriter{t}
@@ -463,7 +553,7 @@ func TestStopFallsBackFromStaleDiscovery(t *testing.T) {
 //
 // A tiny config file is written pointing the HTTP listener at 127.0.0.1:0 so
 // these tests do not contend with anything already on :8080 and so parallel
-// runs of the serve/force tests do not collide on a fixed port.
+// runs of the daemon/force tests do not collide on a fixed port.
 func startDaemonForStopTest(t *testing.T) (bin, sockPath string, env []string, waitOnce func() error, cleanup func()) {
 	t.Helper()
 	env, _ = isolatedHostmuxEnv(t)
@@ -486,7 +576,7 @@ func startDaemonForStopTest(t *testing.T) (bin, sockPath string, env []string, w
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, bin, "serve", "--config", cfgPath, "--socket", sockPath)
+	cmd := exec.CommandContext(ctx, bin, "start", "--foreground", "--config", cfgPath, "--socket", sockPath)
 	cmd.Env = env
 	cmd.Stdout = testWriter{t}
 	cmd.Stderr = testWriter{t}

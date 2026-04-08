@@ -17,6 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/Limetric/hostmux/internal/config"
+	"github.com/Limetric/hostmux/internal/daemon"
 	"github.com/Limetric/hostmux/internal/daemonctl"
 	"github.com/Limetric/hostmux/internal/listener"
 	"github.com/Limetric/hostmux/internal/proxy"
@@ -26,17 +27,59 @@ import (
 	"github.com/Limetric/hostmux/internal/tlsconfig"
 )
 
+func cmdStart(args []string) int {
+	fs := flag.NewFlagSet("start", flag.ExitOnError)
+	configPath := fs.String("config", "", "path to TOML config file (optional)")
+	socketFlag := fs.String("socket", "", "override Unix socket path")
+	forceFlag := fs.Bool("force", false, "stop any existing daemon on this socket and take over")
+	foregroundFlag := fs.Bool("foreground", false, "run in the foreground instead of daemonizing")
+	fs.Parse(args)
+
+	if *foregroundFlag {
+		return runForegroundDaemon("start", *configPath, *socketFlag, *forceFlag)
+	}
+
+	sockPath, err := resolveServeSocketPath(*configPath, *socketFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hostmux start: %v\n", err)
+		return 1
+	}
+
+	spawnArgs := startForegroundArgs(*configPath, *socketFlag, *forceFlag)
+	if !*forceFlag {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := daemon.EnsureRunning(ctx, sockPath, daemon.EnsureOpts{
+			Spawn: func() error { return daemon.SpawnDetached(spawnArgs...) },
+		})
+		cancel()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "hostmux start: could not start daemon: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
+	if err := daemon.SpawnDetached(spawnArgs...); err != nil {
+		fmt.Fprintf(os.Stderr, "hostmux start: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
 func cmdServe(args []string) int {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	configPath := fs.String("config", "", "path to TOML config file (optional)")
 	socketFlag := fs.String("socket", "", "override Unix socket path")
 	forceFlag := fs.Bool("force", false, "stop any existing daemon on this socket and take over")
 	fs.Parse(args)
+	return runForegroundDaemon("serve", *configPath, *socketFlag, *forceFlag)
+}
 
+func runForegroundDaemon(name, configPath, socketFlag string, force bool) int {
 	r := router.New()
 
 	// Optional config file. If not provided, look in standard locations.
-	resolvedConfigPath := *configPath
+	resolvedConfigPath := configPath
 	if resolvedConfigPath == "" {
 		resolvedConfigPath = defaultConfigPath()
 	}
@@ -95,7 +138,7 @@ func cmdServe(args []string) int {
 
 	// Resolve socket path.
 	sockPath, err := sockpath.ResolveServe(sockpath.Options{
-		Flag:         *socketFlag,
+		Flag:         socketFlag,
 		ConfigSocket: configSocket,
 	})
 	if err != nil {
@@ -113,15 +156,15 @@ func cmdServe(args []string) int {
 	pidPath := sockpath.PIDFilePathFor(sockPath)
 	pidLock, contention, err := acquirePIDLock(pidPath)
 	if err != nil {
-		log.Printf("hostmux serve: pid lock: %v", err)
+		log.Printf("hostmux %s: pid lock: %v", name, err)
 		return 1
 	}
 	if contention {
-		if !*forceFlag {
-			log.Printf("hostmux serve: another daemon already serving %s (pid file: %s); exiting", sockPath, pidPath)
+		if !force {
+			log.Printf("hostmux %s: another daemon already serving %s (pid file: %s); exiting", name, sockPath, pidPath)
 			return 0
 		}
-		log.Printf("hostmux serve: --force: stopping existing daemon on %s", sockPath)
+		log.Printf("hostmux %s: --force: stopping existing daemon on %s", name, sockPath)
 		res, stopErr := daemonctl.Stop(daemonctl.StopOptions{
 			SockPath:        sockPath,
 			PIDPath:         pidPath,
@@ -129,20 +172,20 @@ func cmdServe(args []string) int {
 			KillTimeout:     2 * time.Second,
 		})
 		if stopErr != nil {
-			log.Printf("hostmux serve: --force: stop failed: %v", stopErr)
+			log.Printf("hostmux %s: --force: stop failed: %v", name, stopErr)
 			return 1
 		}
 		if res.NotRunning {
-			log.Printf("hostmux serve: --force: no daemon was running after all")
+			log.Printf("hostmux %s: --force: no daemon was running after all", name)
 		}
 		// Retry the acquire exactly once.
 		pidLock, contention, err = acquirePIDLock(pidPath)
 		if err != nil {
-			log.Printf("hostmux serve: pid lock (retry): %v", err)
+			log.Printf("hostmux %s: pid lock (retry): %v", name, err)
 			return 1
 		}
 		if contention {
-			log.Printf("hostmux serve: --force: another daemon claimed the lock during takeover")
+			log.Printf("hostmux %s: --force: another daemon claimed the lock during takeover", name)
 			return 1
 		}
 	}
@@ -170,9 +213,9 @@ func cmdServe(args []string) int {
 			}
 		}()
 	}
-	log.Printf("hostmux serve: TLS listening on %s", tlsCfg.Listen)
+	log.Printf("hostmux %s: TLS listening on %s", name, tlsCfg.Listen)
 	if generatedTLS {
-		log.Printf("hostmux serve: generated self-signed cert at %s and %s", tlsCfg.CertFile, tlsCfg.KeyFile)
+		log.Printf("hostmux %s: generated self-signed cert at %s and %s", name, tlsCfg.CertFile, tlsCfg.KeyFile)
 	}
 
 	// Unix socket server.
@@ -187,7 +230,7 @@ func cmdServe(args []string) int {
 		return 1
 	}
 	go sockSrv.Serve()
-	log.Printf("hostmux serve: socket listening on %s", sockPath)
+	log.Printf("hostmux %s: socket listening on %s", name, sockPath)
 
 	// Discovery file (PID file is already written under the flock above).
 	if err := sockpath.WriteDiscovery(sockPath); err != nil {
@@ -216,7 +259,7 @@ func cmdServe(args []string) int {
 	case <-sigCh:
 	case <-ctx.Done():
 	}
-	log.Printf("hostmux serve: shutting down")
+	log.Printf("hostmux %s: shutting down", name)
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
@@ -232,6 +275,45 @@ func cmdServe(args []string) int {
 	// and our process exit. The next daemon will simply truncate and
 	// rewrite it under its own flock.
 	return 0
+}
+
+func startForegroundArgs(configPath, socketFlag string, force bool) []string {
+	args := []string{"start", "--foreground"}
+	if configPath != "" {
+		args = append(args, "--config", configPath)
+	}
+	if socketFlag != "" {
+		args = append(args, "--socket", socketFlag)
+	}
+	if force {
+		args = append(args, "--force")
+	}
+	return args
+}
+
+func resolveServeSocketPath(configPath, socketFlag string) (string, error) {
+	resolvedConfigPath := configPath
+	if resolvedConfigPath == "" {
+		resolvedConfigPath = defaultConfigPath()
+	}
+
+	configSocket := ""
+	if resolvedConfigPath != "" {
+		if _, err := os.Stat(resolvedConfigPath); err == nil {
+			cfg, err := config.Load(resolvedConfigPath)
+			if err != nil {
+				return "", err
+			}
+			configSocket = cfg.Socket
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+	}
+
+	return sockpath.ResolveServe(sockpath.Options{
+		Flag:         socketFlag,
+		ConfigSocket: configSocket,
+	})
 }
 
 func defaultConfigPath() string {
