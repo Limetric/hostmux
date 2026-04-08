@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/Limetric/hostmux/internal/config"
+	"github.com/Limetric/hostmux/internal/daemonctl"
 	"github.com/Limetric/hostmux/internal/listener"
 	"github.com/Limetric/hostmux/internal/proxy"
 	"github.com/Limetric/hostmux/internal/router"
@@ -27,6 +28,7 @@ func cmdServe(args []string) int {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	configPath := fs.String("config", "", "path to TOML config file (optional)")
 	socketFlag := fs.String("socket", "", "override Unix socket path")
+	forceFlag := fs.Bool("force", false, "stop any existing daemon on this socket and take over")
 	fs.Parse(args)
 
 	r := router.New()
@@ -97,8 +99,34 @@ func cmdServe(args []string) int {
 		return 1
 	}
 	if contention {
-		log.Printf("hostmux serve: another daemon already serving %s (pid file: %s); exiting", sockPath, pidPath)
-		return 0
+		if !*forceFlag {
+			log.Printf("hostmux serve: another daemon already serving %s (pid file: %s); exiting", sockPath, pidPath)
+			return 0
+		}
+		log.Printf("hostmux serve: --force: stopping existing daemon on %s", sockPath)
+		res, stopErr := daemonctl.Stop(daemonctl.StopOptions{
+			SockPath:        sockPath,
+			PIDPath:         pidPath,
+			GracefulTimeout: 5 * time.Second,
+			KillTimeout:     2 * time.Second,
+		})
+		if stopErr != nil {
+			log.Printf("hostmux serve: --force: stop failed: %v", stopErr)
+			return 1
+		}
+		if res.NotRunning {
+			log.Printf("hostmux serve: --force: no daemon was running after all")
+		}
+		// Retry the acquire exactly once.
+		pidLock, contention, err = acquirePIDLock(pidPath)
+		if err != nil {
+			log.Printf("hostmux serve: pid lock (retry): %v", err)
+			return 1
+		}
+		if contention {
+			log.Printf("hostmux serve: --force: another daemon claimed the lock during takeover")
+			return 1
+		}
 	}
 	defer pidLock.Close()
 
