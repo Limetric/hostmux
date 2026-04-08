@@ -111,20 +111,11 @@ func cmdRun(args []string) int {
 			fmt.Fprintf(os.Stderr, "hostmux run: info response: %v\n", err)
 			return 1
 		}
-		if !resp.Ok {
-			if !strings.Contains(resp.Error, "unknown op") {
-				fmt.Fprintf(os.Stderr, "hostmux run: info rejected: %s\n", resp.Error)
-				return 1
-			}
-		} else {
+		if resp.Ok {
 			domain = hostnames.NormalizeDomain(resp.Domain)
 		}
 	}
-	hosts, err = hostnames.Expand(hosts, domain)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "hostmux run: %v\n", err)
-		return 1
-	}
+	hosts = hostnames.Expand(hosts, domain)
 	upstream := fmt.Sprintf("http://127.0.0.1:%d", port)
 	if err := enc.Encode(&sockproto.Message{Op: sockproto.OpRegister, Hosts: hosts, Upstream: upstream}); err != nil {
 		fmt.Fprintf(os.Stderr, "hostmux run: register: %v\n", err)

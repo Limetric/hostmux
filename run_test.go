@@ -161,7 +161,7 @@ func TestCmdRunUsesDaemonDomainForBareHost(t *testing.T) {
 	}
 }
 
-func TestCmdRunRejectsBareHostWithoutAnyDomain(t *testing.T) {
+func TestCmdRunPassesThroughBareHostWhenNoDomainAvailable(t *testing.T) {
 	hosts, code, stderr := runCmdRunAndCapture(t, runServerScript{}, []string{
 		"api",
 		"--",
@@ -179,7 +179,7 @@ func TestCmdRunRejectsBareHostWithoutAnyDomain(t *testing.T) {
 func TestCmdRunFallsBackWhenDaemonDoesNotSupportInfo(t *testing.T) {
 	hosts, code, stderr := runCmdRunAndCapture(t, runServerScript{
 		infoOk:    false,
-		infoError: `unknown op "info"`,
+		infoError: "unsupported operation",
 	}, []string{
 		"api",
 		"--",

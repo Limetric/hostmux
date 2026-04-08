@@ -70,11 +70,7 @@ func (c *Config) applyDefaults() {
 func (c *Config) normalize() error {
 	c.Domain = hostnames.NormalizeDomain(c.Domain)
 	for i := range c.Apps {
-		expanded, err := hostnames.Expand(c.Apps[i].Hosts, c.Domain)
-		if err != nil {
-			return fmt.Errorf("config: app[%d]: %w", i, err)
-		}
-		c.Apps[i].Hosts = expanded
+		c.Apps[i].Hosts = hostnames.Expand(c.Apps[i].Hosts, c.Domain)
 	}
 	return nil
 }

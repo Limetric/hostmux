@@ -25,7 +25,7 @@ func HasBare(names []string) bool {
 
 // Expand converts bare subdomain labels into full hostnames using domain.
 // Inputs that already contain a dot are preserved as full hostnames.
-func Expand(names []string, domain string) ([]string, error) {
+func Expand(names []string, domain string) []string {
 	domain = NormalizeDomain(domain)
 	out := make([]string, 0, len(names))
 	for _, name := range names {
@@ -42,7 +42,7 @@ func Expand(names []string, domain string) ([]string, error) {
 		}
 		out = append(out, name)
 	}
-	return out, nil
+	return out
 }
 
 func needsExpansion(name string) bool {
