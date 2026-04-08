@@ -103,12 +103,12 @@ Run it with `hostmux serve --config /path/to/hostmux.toml`. `listen` serves plai
 
 ## Worktrees
 
-`hostmux run` auto-detects non-primary git worktrees and prepends the worktree name as a subdomain so two checkouts of the same project don't collide:
+`hostmux run` auto-detects non-primary git worktrees and prepends the worktree name to the hostname so two checkouts of the same project don't collide:
 
 | cwd | command | actual hostnames |
 |---|---|---|
 | `~/proj/main` (primary) | `hostmux run myapp.test -- ...` | `myapp.test` |
-| `~/proj/feature-x` (worktree) | `hostmux run myapp.test -- ...` | `feature-x.myapp.test` |
+| `~/proj/feature-x` (worktree) | `hostmux run myapp.test -- ...` | `feature-x-myapp.test` |
 
 Override with `--prefix NAME` or disable with `--no-prefix`.
 

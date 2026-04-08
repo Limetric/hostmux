@@ -19,7 +19,7 @@ import (
 func cmdRun(args []string) int {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	socketFlag := fs.String("socket", "", "override Unix socket path")
-	prefixFlag := fs.String("prefix", "", "explicit subdomain prefix (overrides worktree detection)")
+	prefixFlag := fs.String("prefix", "", "explicit hostname prefix (overrides worktree detection)")
 	noPrefix := fs.Bool("no-prefix", false, "disable worktree auto-prefixing")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: hostmux run HOSTS [--socket PATH] [--prefix NAME | --no-prefix] -- COMMAND [ARGS...]\n")
@@ -56,7 +56,7 @@ func cmdRun(args []string) int {
 	}
 	if prefix != "" {
 		for i, h := range hosts {
-			hosts[i] = prefix + "." + h
+			hosts[i] = prefix + "-" + h
 		}
 	}
 
