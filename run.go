@@ -112,14 +112,13 @@ func cmdRun(args []string) int {
 			return 1
 		}
 		if !resp.Ok {
-			fmt.Fprintf(os.Stderr, "hostmux run: info rejected: %s\n", resp.Error)
-			return 1
+			if !strings.Contains(resp.Error, "unknown op") {
+				fmt.Fprintf(os.Stderr, "hostmux run: info rejected: %s\n", resp.Error)
+				return 1
+			}
+		} else {
+			domain = hostnames.NormalizeDomain(resp.Domain)
 		}
-		domain = hostnames.NormalizeDomain(resp.Domain)
-	}
-	if hostnames.HasBare(hosts) && domain == "" {
-		fmt.Fprintln(os.Stderr, "hostmux run: bare subdomains require --domain or daemon config domain")
-		return 1
 	}
 	hosts, err = hostnames.Expand(hosts, domain)
 	if err != nil {

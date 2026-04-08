@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -163,21 +162,42 @@ func TestCmdRunUsesDaemonDomainForBareHost(t *testing.T) {
 }
 
 func TestCmdRunRejectsBareHostWithoutAnyDomain(t *testing.T) {
-	_, code, stderr := runCmdRunAndCapture(t, runServerScript{}, []string{
+	hosts, code, stderr := runCmdRunAndCapture(t, runServerScript{}, []string{
 		"api",
 		"--",
 		"/usr/bin/true",
 	})
-	if code == 0 {
-		t.Fatal("expected cmdRun to fail")
+	if code != 0 {
+		t.Fatalf("cmdRun exit code = %d, stderr = %q", code, stderr)
 	}
-	if !strings.Contains(stderr, "require --domain or daemon config domain") {
-		t.Fatalf("stderr = %q", stderr)
+	want := []string{"api"}
+	if !reflect.DeepEqual(hosts, want) {
+		t.Fatalf("registered hosts = %v, want %v", hosts, want)
+	}
+}
+
+func TestCmdRunFallsBackWhenDaemonDoesNotSupportInfo(t *testing.T) {
+	hosts, code, stderr := runCmdRunAndCapture(t, runServerScript{
+		infoOk:    false,
+		infoError: `unknown op "info"`,
+	}, []string{
+		"api",
+		"--",
+		"/usr/bin/true",
+	})
+	if code != 0 {
+		t.Fatalf("cmdRun exit code = %d, stderr = %q", code, stderr)
+	}
+	want := []string{"api"}
+	if !reflect.DeepEqual(hosts, want) {
+		t.Fatalf("registered hosts = %v, want %v", hosts, want)
 	}
 }
 
 type runServerScript struct {
-	domain string
+	domain    string
+	infoOk    bool
+	infoError string
 }
 
 func runCmdRunAndCapture(t *testing.T, script runServerScript, args []string) ([]string, int, string) {
@@ -229,7 +249,11 @@ func runCmdRunAndCapture(t *testing.T, script runServerScript, args []string) ([
 			}
 			switch msg.Op {
 			case sockproto.OpInfo:
-				if err := enc.Encode(&sockproto.Message{Ok: true, Domain: script.domain}); err != nil {
+				ok := true
+				if script.infoError != "" {
+					ok = script.infoOk
+				}
+				if err := enc.Encode(&sockproto.Message{Ok: ok, Domain: script.domain, Error: script.infoError}); err != nil {
 					errCh <- err
 				}
 			case sockproto.OpRegister:

@@ -1,7 +1,7 @@
 package hostnames
 
 import (
-	"fmt"
+	"net"
 	"strings"
 )
 
@@ -16,7 +16,7 @@ func NormalizeDomain(domain string) string {
 // full hostname. Any name containing a dot is treated as a full hostname.
 func HasBare(names []string) bool {
 	for _, name := range names {
-		if isBare(name) {
+		if needsExpansion(strings.TrimSpace(name)) {
 			return true
 		}
 	}
@@ -33,9 +33,10 @@ func Expand(names []string, domain string) ([]string, error) {
 		if name == "" {
 			continue
 		}
-		if isBare(name) {
+		if needsExpansion(name) {
 			if domain == "" {
-				return nil, fmt.Errorf("subdomain %q requires a domain", name)
+				out = append(out, name)
+				continue
 			}
 			name = name + "." + domain
 		}
@@ -44,6 +45,13 @@ func Expand(names []string, domain string) ([]string, error) {
 	return out, nil
 }
 
-func isBare(name string) bool {
-	return name != "" && !strings.Contains(name, ".")
+func needsExpansion(name string) bool {
+	if name == "" || strings.Contains(name, ".") {
+		return false
+	}
+	if strings.EqualFold(name, "localhost") {
+		return false
+	}
+	trimmed := strings.Trim(name, "[]")
+	return net.ParseIP(trimmed) == nil
 }

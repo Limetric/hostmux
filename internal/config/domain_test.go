@@ -32,7 +32,7 @@ upstream = "http://127.0.0.1:8080"
 	}
 }
 
-func TestLoadRejectsBareHostsWithoutTopLevelDomain(t *testing.T) {
+func TestLoadLeavesBareHostsUnchangedWithoutTopLevelDomain(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hostmux.toml")
 	writeFile(t, path, `
@@ -41,7 +41,11 @@ hosts = ["api"]
 upstream = "http://127.0.0.1:8080"
 `)
 
-	if _, err := Load(path); err == nil {
-		t.Fatal("expected validation error")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Apps[0].Hosts; len(got) != 1 || got[0] != "api" {
+		t.Fatalf("hosts = %v", got)
 	}
 }
