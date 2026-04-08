@@ -2,6 +2,7 @@ package childproc
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os/exec"
 	"strconv"
@@ -68,7 +69,10 @@ func TestRunCancelsChildOnContextCancel(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	cancel()
 	select {
-	case <-done:
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not return after context cancel")
 	}
@@ -84,5 +88,7 @@ func TestRunFailsOnMissingBinary(t *testing.T) {
 	}
 	// Make sure the type is a usable exec error so callers can format it.
 	var execErr *exec.Error
-	_ = execErr
+	if !errors.As(err, &execErr) {
+		t.Fatalf("expected *exec.Error in chain, got %T: %v", err, err)
+	}
 }

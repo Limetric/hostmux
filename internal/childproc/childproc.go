@@ -45,7 +45,12 @@ func AllocateFreePort() (int, error) {
 
 // Run spawns the child, wires stdio to the calling process, forwards signals,
 // and returns the child's exit code. Context cancellation kills the child
-// with SIGTERM to the process group and waits for it to exit.
+// process group with SIGTERM, waits for it to exit, and returns ctx.Err().
+//
+// Run is intended to be called at most once per process (matching the
+// hostmux run workflow). Calling Run concurrently in the same process will
+// deliver each incoming parent signal to every active child's process
+// group, because Go's os/signal package fans out to all registered channels.
 func Run(ctx context.Context, opts RunOpts) (int, error) {
 	if len(opts.Argv) == 0 {
 		return 0, errors.New("childproc: empty argv")
@@ -88,7 +93,7 @@ func Run(ctx context.Context, opts RunOpts) (int, error) {
 			killGroup(syscall.SIGTERM)
 			// Drain doneCh; ignore the error — the child was killed by us.
 			<-doneCh
-			return 0, nil
+			return 0, ctx.Err()
 		case sig := <-sigCh:
 			killGroup(sig.(syscall.Signal))
 		case err := <-doneCh:
