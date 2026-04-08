@@ -18,10 +18,6 @@ import (
 // returned by r.Lookup for the request's Host. The original Host header is
 // preserved end-to-end.
 func New(r *router.Router) http.Handler {
-	rp := &httputil.ReverseProxy{
-		Director:     func(req *http.Request) {}, // overridden per-request
-		ErrorHandler: errorHandler,
-	}
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		host := stripPort(req.Host)
 		upstream, ok := r.Lookup(host)
@@ -34,26 +30,32 @@ func New(r *router.Router) http.Handler {
 			http.Error(w, "invalid upstream URL", http.StatusInternalServerError)
 			return
 		}
-		// Build a fresh proxy per request so we can install a Director that
-		// closes over the resolved target without races.
-		perReq := *rp
 		originalHost := req.Host
-		perReq.Director = func(out *http.Request) {
-			out.URL.Scheme = target.Scheme
-			out.URL.Host = target.Host
-			out.Host = originalHost
-			if out.Header.Get("X-Forwarded-Host") == "" {
-				out.Header.Set("X-Forwarded-Host", originalHost)
-			}
-			if out.Header.Get("X-Forwarded-Proto") == "" {
-				if req.TLS != nil {
-					out.Header.Set("X-Forwarded-Proto", "https")
-				} else {
-					out.Header.Set("X-Forwarded-Proto", "http")
+		// Build a fresh ReverseProxy per request so the Director closure is
+		// race-free. Only the fields we actually need are set, so future
+		// additions to httputil.ReverseProxy cannot silently break us.
+		rp := &httputil.ReverseProxy{
+			ErrorHandler: errorHandler,
+			Director: func(out *http.Request) {
+				out.URL.Scheme = target.Scheme
+				out.URL.Host = target.Host
+				// Setting out.Host to a non-empty string prevents net/http
+				// from falling back to out.URL.Host for the wire Host header,
+				// preserving the original end-to-end.
+				out.Host = originalHost
+				if out.Header.Get("X-Forwarded-Host") == "" {
+					out.Header.Set("X-Forwarded-Host", originalHost)
 				}
-			}
+				if out.Header.Get("X-Forwarded-Proto") == "" {
+					if req.TLS != nil {
+						out.Header.Set("X-Forwarded-Proto", "https")
+					} else {
+						out.Header.Set("X-Forwarded-Proto", "http")
+					}
+				}
+			},
 		}
-		perReq.ServeHTTP(w, req)
+		rp.ServeHTTP(w, req)
 	})
 }
 
