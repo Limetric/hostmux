@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -11,6 +12,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/Limetric/hostmux/internal/config"
 	"github.com/Limetric/hostmux/internal/listener"
@@ -83,6 +86,22 @@ func cmdServe(args []string) int {
 		_ = os.MkdirAll(dir, 0o755)
 	}
 
+	// Acquire the PID-file flock for this socket path. The PID file lives
+	// next to the socket so daemons on different sockets coexist; the flock
+	// makes "two daemons on the same socket" detect each other and the
+	// loser exits cleanly with no error.
+	pidPath := pidFilePathFor(sockPath)
+	pidLock, contention, err := acquirePIDLock(pidPath)
+	if err != nil {
+		log.Printf("hostmux serve: pid lock: %v", err)
+		return 1
+	}
+	if contention {
+		log.Printf("hostmux serve: another daemon already serving %s (pid file: %s); exiting", sockPath, pidPath)
+		return 0
+	}
+	defer pidLock.Close()
+
 	// HTTP listeners.
 	handler := proxy.New(r)
 	servers, err := listener.Build(listener.Config{Plain: plain, TLS: tlsCfg}, handler)
@@ -125,13 +144,9 @@ func cmdServe(args []string) int {
 	go sockSrv.Serve()
 	log.Printf("hostmux serve: socket listening on %s", sockPath)
 
-	// Discovery file + PID file.
+	// Discovery file (PID file is already written under the flock above).
 	if err := sockpath.WriteDiscovery(sockPath); err != nil {
 		log.Printf("sockpath: write discovery: %v", err)
-	}
-	pidPath := pidFilePath()
-	if pidPath != "" {
-		_ = os.WriteFile(pidPath, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o644)
 	}
 
 	// Config watcher.
@@ -164,9 +179,12 @@ func cmdServe(args []string) int {
 	}
 	_ = sockSrv.Close()
 	_ = sockpath.RemoveDiscovery()
-	if pidPath != "" {
-		_ = os.Remove(pidPath)
-	}
+	// We deliberately do NOT delete the PID file. The flock is released
+	// automatically when pidLock.Close() runs, and leaving the file in
+	// place avoids a race window where a second daemon could start, see no
+	// file, create one, and acquire its lock — all between our os.Remove
+	// and our process exit. The next daemon will simply truncate and
+	// rewrite it under its own flock.
 	return 0
 }
 
@@ -180,12 +198,56 @@ func defaultConfigPath() string {
 	return ""
 }
 
-func pidFilePath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
+// pidFilePathFor returns the PID file path co-located with the given Unix
+// socket path. The PID file lives in the same directory as the socket so
+// two daemons on different sockets do not contend on the same lock. If
+// the socket name ends in ".sock" the suffix is replaced with ".pid"
+// (giving the canonical "~/.hostmux/hostmux.pid" for the default socket);
+// otherwise ".pid" is appended.
+func pidFilePathFor(sockPath string) string {
+	dir := filepath.Dir(sockPath)
+	base := filepath.Base(sockPath)
+	if filepath.Ext(base) == ".sock" {
+		base = base[:len(base)-len(".sock")] + ".pid"
+	} else {
+		base = base + ".pid"
 	}
-	dir := filepath.Join(home, ".hostmux")
-	_ = os.MkdirAll(dir, 0o755)
-	return filepath.Join(dir, "hostmux.pid")
+	return filepath.Join(dir, base)
+}
+
+// acquirePIDLock attempts to take an exclusive flock on the PID file. It
+// returns the open file (which the caller MUST keep open for the duration
+// of the daemon — closing it releases the lock), and a contention bool
+// that is true when another process already holds the lock.
+//
+// The flock is advisory and held by the file descriptor, so it is released
+// automatically when the process exits even on SIGKILL. The PID file
+// itself is left in place across daemon restarts; subsequent daemons
+// truncate and rewrite it under their own flock.
+func acquirePIDLock(path string) (*os.File, bool, error) {
+	if dir := filepath.Dir(path); dir != "" {
+		_ = os.MkdirAll(dir, 0o755)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, false, fmt.Errorf("open pid file: %w", err)
+	}
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		f.Close()
+		if errors.Is(err, unix.EWOULDBLOCK) {
+			return nil, true, nil
+		}
+		return nil, false, fmt.Errorf("flock pid file: %w", err)
+	}
+	if err := f.Truncate(0); err != nil {
+		_ = unix.Flock(int(f.Fd()), unix.LOCK_UN)
+		f.Close()
+		return nil, false, fmt.Errorf("truncate pid file: %w", err)
+	}
+	if _, err := f.WriteAt([]byte(fmt.Sprintf("%d\n", os.Getpid())), 0); err != nil {
+		_ = unix.Flock(int(f.Fd()), unix.LOCK_UN)
+		f.Close()
+		return nil, false, fmt.Errorf("write pid file: %w", err)
+	}
+	return f, false, nil
 }
