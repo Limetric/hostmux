@@ -14,6 +14,8 @@ func main() {
 	args := os.Args[2:]
 	var code int
 	switch sub {
+	case "start":
+		code = cmdStart(args)
 	case "serve":
 		code = cmdServe(args)
 	case "run":
@@ -41,6 +43,7 @@ func usage() {
 	fmt.Fprint(os.Stderr, `hostmux — host-routed reverse proxy
 
 usage:
+  hostmux start [--config PATH] [--socket PATH] [--force] [--foreground]
   hostmux serve [--config PATH] [--socket PATH] [--force]
   hostmux run HOSTS [--socket PATH] [--domain DOMAIN] [--prefix NAME | --no-prefix] -- COMMAND [ARGS...]
   hostmux get HOST [--socket PATH] [--domain DOMAIN] [--prefix NAME | --no-prefix]

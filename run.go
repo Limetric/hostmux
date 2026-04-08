@@ -77,7 +77,7 @@ func cmdRun(args []string) int {
 		cancel()
 	} else {
 		if _, err := os.Stat(sockPath); err != nil {
-			fmt.Fprintf(os.Stderr, "hostmux run: socket %s not reachable; start hostmux serve first\n", sockPath)
+			fmt.Fprintf(os.Stderr, "hostmux run: socket %s not reachable; start hostmux first with `hostmux start`\n", sockPath)
 			return 1
 		}
 	}
