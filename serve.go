@@ -294,11 +294,13 @@ func startForegroundArgs(configPath, socketFlag string, force bool) []string {
 }
 
 func startForcedDetachedDaemon(sockPath string, spawnArgs []string) error {
+	// Missing or stale PID data is fine here; 0 simply means "accept any
+	// live replacement PID" while we still require socket reachability.
 	oldPID, _ := readPIDFile(sockpath.PIDFilePathFor(sockPath))
 	if err := daemon.SpawnDetached(spawnArgs...); err != nil {
 		return err
 	}
-	return waitForReplacementDaemon(sockPath, sockpath.PIDFilePathFor(sockPath), oldPID, 5*time.Second)
+	return waitForReplacementDaemon(sockPath, sockpath.PIDFilePathFor(sockPath), oldPID, 8*time.Second)
 }
 
 func waitForReplacementDaemon(sockPath, pidPath string, oldPID int, timeout time.Duration) error {

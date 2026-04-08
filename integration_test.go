@@ -460,6 +460,40 @@ func TestStartForceReportsStartupFailure(t *testing.T) {
 	}
 }
 
+func TestStartForceDetachedSuccess(t *testing.T) {
+	bin, sockPath, env, firstWait, cleanup := startDaemonForStopTest(t)
+	defer cleanup()
+
+	logDir := t.TempDir()
+	cfgPath := filepath.Join(logDir, "hostmux.toml")
+	if err := os.WriteFile(cfgPath, []byte("listen = \"127.0.0.1:0\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	start := exec.Command(bin, "start", "--config", cfgPath, "--socket", sockPath, "--force")
+	start.Env = env
+	if out, err := start.CombinedOutput(); err != nil {
+		t.Fatalf("start --force: %v\n%s", err, out)
+	}
+
+	firstExited := make(chan struct{})
+	go func() {
+		firstWait()
+		close(firstExited)
+	}()
+	select {
+	case <-firstExited:
+	case <-time.After(8 * time.Second):
+		t.Fatal("first daemon did not exit after start --force")
+	}
+
+	list := exec.Command(bin, "list", "--socket", sockPath)
+	list.Env = env
+	if out, err := list.CombinedOutput(); err != nil {
+		t.Fatalf("list: %v\n%s", err, out)
+	}
+}
+
 func TestServeForce(t *testing.T) {
 	bin, sockPath, env, firstWait, cleanup := startDaemonForStopTest(t)
 	defer cleanup()
