@@ -59,9 +59,9 @@ jobs:
 
             Use `gh pr view`, `gh pr diff`, and other allowed `gh pr` commands as needed to inspect prior feedback before commenting.
             Use `gh pr comment` with your Bash tool to leave your review as a comment on the PR.
-          
+
           claude_args: |
-            --model claude-opus-4-6
+            --model claude-sonnet-4-6
             --mcp-config .mcp.json
 
           additional_permissions: |
