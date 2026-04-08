@@ -1,0 +1,129 @@
+// Package sockserver implements the hostmux daemon's Unix socket listener.
+// Clients (hostmux run, hostmux list) connect, exchange newline-delimited
+// JSON messages defined in internal/sockproto, and receive routing-table
+// mutations or queries. Each connection's registrations are scoped to the
+// lifetime of the TCP connection: an EOF or error triggers automatic
+// removal via router.RemoveBySource, so a SIGKILL'd registrar produces no
+// stale state.
+package sockserver
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"sync"
+	"sync/atomic"
+
+	"github.com/Limetric/hostmux/internal/router"
+	"github.com/Limetric/hostmux/internal/sockproto"
+)
+
+// Server is the daemon-side Unix socket server. Each connection owns the
+// hostnames it registered; on disconnect the daemon removes them.
+type Server struct {
+	router *router.Router
+
+	mu     sync.Mutex
+	ln     net.Listener
+	closed bool
+	connID atomic.Uint64
+}
+
+// New returns a Server bound to the given router.
+func New(r *router.Router) *Server {
+	return &Server{router: r}
+}
+
+// Listen creates the Unix socket at path. Removes any stale socket file first.
+func (s *Server) Listen(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("sockserver: cleanup stale socket: %w", err)
+	}
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		return fmt.Errorf("sockserver: listen %s: %w", path, err)
+	}
+	s.mu.Lock()
+	s.ln = ln
+	s.mu.Unlock()
+	return nil
+}
+
+// Serve accepts connections until Close is called.
+func (s *Server) Serve() {
+	for {
+		s.mu.Lock()
+		ln := s.ln
+		s.mu.Unlock()
+		if ln == nil {
+			return
+		}
+		conn, err := ln.Accept()
+		if err != nil {
+			s.mu.Lock()
+			closed := s.closed
+			s.mu.Unlock()
+			if closed {
+				return
+			}
+			continue
+		}
+		go s.serveConn(conn)
+	}
+}
+
+// Close stops the listener and unblocks Serve.
+func (s *Server) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	if s.ln != nil {
+		err := s.ln.Close()
+		s.ln = nil
+		return err
+	}
+	return nil
+}
+
+func (s *Server) serveConn(c net.Conn) {
+	id := s.connID.Add(1)
+	source := fmt.Sprintf("socket:%d", id)
+	defer func() {
+		s.router.RemoveBySource(source)
+		c.Close()
+	}()
+	dec := sockproto.NewDecoder(c)
+	enc := sockproto.NewEncoder(c)
+	for {
+		msg, err := dec.Decode()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return
+			}
+			_ = enc.Encode(&sockproto.Message{Ok: false, Error: err.Error()})
+			return
+		}
+		switch msg.Op {
+		case sockproto.OpRegister:
+			if err := s.router.Add(source, msg.Hosts, msg.Upstream); err != nil {
+				_ = enc.Encode(&sockproto.Message{Ok: false, Error: err.Error()})
+				continue
+			}
+			_ = enc.Encode(&sockproto.Message{Ok: true})
+		case sockproto.OpList:
+			snap := s.router.Snapshot()
+			out := make([]sockproto.Entry, 0, len(snap))
+			for _, e := range snap {
+				out = append(out, sockproto.Entry{Source: e.Source, Hosts: e.Hosts, Upstream: e.Upstream})
+			}
+			_ = enc.Encode(&sockproto.Message{Ok: true, Entries: out})
+		case sockproto.OpBye:
+			_ = enc.Encode(&sockproto.Message{Ok: true})
+			return
+		default:
+			_ = enc.Encode(&sockproto.Message{Ok: false, Error: fmt.Sprintf("unknown op %q", msg.Op)})
+		}
+	}
+}
