@@ -136,7 +136,7 @@ func cmdServe(args []string) int {
 	}
 
 	// Unix socket server.
-	sockSrv := sockserver.New(r)
+	sockSrv := sockserver.New(r, sockserver.Options{OnShutdown: cancel})
 	if err := sockSrv.Listen(sockPath); err != nil {
 		log.Printf("sockserver: %v", err)
 		return 1
