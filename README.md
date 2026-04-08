@@ -19,6 +19,9 @@ go build -o build/hostmux .
 # Inspect the active routes.
 ./build/hostmux list
 
+# Print the URL for a route without starting anything.
+./build/hostmux get --domain example.com myapp
+
 # Stop the daemon.
 ./build/hostmux stop
 ```
@@ -32,12 +35,18 @@ More useful commands:
 # Full hostnames still work unchanged.
 ./build/hostmux run admin.other.test -- bun run dev
 
+# Print the final URL using the same domain/prefix logic as `run`.
+./build/hostmux get --domain example.com app
+./build/hostmux get --domain example.com --prefix feature-x app
+
 # Replace a running daemon (e.g. after rebuilding the binary or editing config).
 ./build/hostmux serve --force
 ```
 
 `hostmux run` allocates a free TCP port, sets `PORT=<port>` in the child's environment, expands bare subdomains using `--domain` (or the daemon's configured `domain`), registers the resulting hostnames with the daemon, streams the child's stdio, and automatically deregisters when the child exits — even on crash or `kill -9`.
 Without either source of domain information, bare names pass through unchanged.
+
+`hostmux get` prints `https://<hostname>` using the same `--domain`, `--prefix`, and `--no-prefix` resolution path as `hostmux run`. If `--domain` is omitted and a daemon is available, it also reuses the daemon's configured domain for bare names.
 
 ## Behind cloudflared
 
