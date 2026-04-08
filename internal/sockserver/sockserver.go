@@ -30,6 +30,11 @@ type Options struct {
 
 	// Domain returns the daemon's configured base domain, if any.
 	Domain func() string
+
+	// PlainHTTP is true when the daemon's public edge uses only plain HTTP
+	// (no TLS listener). When false, clients should use https:// for public
+	// URLs such as HOSTMUX_URL.
+	PlainHTTP bool
 }
 
 // Server is the daemon-side Unix socket server. Each connection owns the
@@ -38,6 +43,7 @@ type Server struct {
 	router     *router.Router
 	onShutdown func()
 	domain     func() string
+	plainHTTP  bool
 
 	mu     sync.Mutex
 	ln     net.Listener
@@ -47,7 +53,12 @@ type Server struct {
 
 // New returns a Server bound to the given router and options.
 func New(r *router.Router, opts Options) *Server {
-	return &Server{router: r, onShutdown: opts.OnShutdown, domain: opts.Domain}
+	return &Server{
+		router:     r,
+		onShutdown: opts.OnShutdown,
+		domain:     opts.Domain,
+		plainHTTP:  opts.PlainHTTP,
+	}
 }
 
 // Listen creates the Unix socket at path. Removes any stale socket file first.
@@ -138,7 +149,8 @@ func (s *Server) serveConn(c net.Conn) {
 			if s.domain != nil {
 				domain = s.domain()
 			}
-			_ = enc.Encode(&sockproto.Message{Ok: true, Domain: domain})
+			publicHTTPS := !s.plainHTTP
+			_ = enc.Encode(&sockproto.Message{Ok: true, Domain: domain, PublicHTTPS: &publicHTTPS})
 		case sockproto.OpBye:
 			_ = enc.Encode(&sockproto.Message{Ok: true})
 			return

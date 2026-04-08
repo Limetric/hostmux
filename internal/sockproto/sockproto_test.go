@@ -49,6 +49,19 @@ func TestEncodeDecodeError(t *testing.T) {
 	}
 }
 
+func TestEncodeDecodeInfo(t *testing.T) {
+	https := true
+	var buf bytes.Buffer
+	NewEncoder(&buf).Encode(&Message{Ok: true, Domain: "x.test", PublicHTTPS: &https})
+	got, err := NewDecoder(&buf).Decode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Domain != "x.test" || got.PublicHTTPS == nil || !*got.PublicHTTPS {
+		t.Fatalf("got %+v", got)
+	}
+}
+
 func TestEncodeDecodeList(t *testing.T) {
 	var buf bytes.Buffer
 	NewEncoder(&buf).Encode(&Message{

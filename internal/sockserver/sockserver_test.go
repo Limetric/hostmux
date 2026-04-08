@@ -216,6 +216,9 @@ func TestInfoReturnsDomain(t *testing.T) {
 	if resp.Domain != "example.com" {
 		t.Fatalf("domain = %q", resp.Domain)
 	}
+	if resp.PublicHTTPS == nil || !*resp.PublicHTTPS {
+		t.Fatalf("public_https = %v, want true", resp.PublicHTTPS)
+	}
 }
 
 func TestInfoReturnsEmptyDomainWhenCallbackIsNil(t *testing.T) {
@@ -244,5 +247,37 @@ func TestInfoReturnsEmptyDomainWhenCallbackIsNil(t *testing.T) {
 	}
 	if resp.Domain != "" {
 		t.Fatalf("domain = %q, want empty", resp.Domain)
+	}
+	if resp.PublicHTTPS == nil || !*resp.PublicHTTPS {
+		t.Fatalf("public_https = %v, want true", resp.PublicHTTPS)
+	}
+}
+
+func TestInfoReportsPlainHTTPWhenConfigured(t *testing.T) {
+	path := filepath.Join(shortTempDir(t), "info-plain.sock")
+	r := router.New()
+	srv := New(r, Options{PlainHTTP: true})
+	if err := srv.Listen(path); err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve()
+	t.Cleanup(func() { srv.Close() })
+
+	c := dial(t, path)
+	defer c.Close()
+	enc := sockproto.NewEncoder(c)
+	dec := sockproto.NewDecoder(c)
+	if err := enc.Encode(&sockproto.Message{Op: sockproto.OpInfo}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := dec.Decode()
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.Ok {
+		t.Fatalf("not ok: %s", resp.Error)
+	}
+	if resp.PublicHTTPS == nil || *resp.PublicHTTPS {
+		t.Fatalf("public_https = %v, want false", resp.PublicHTTPS)
 	}
 }

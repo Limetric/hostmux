@@ -195,7 +195,8 @@ func runForegroundDaemon(name, configPath, socketFlag string, force bool) int {
 
 	// HTTP listeners.
 	handler := proxy.New(r)
-	servers, err := listener.Build(listener.Config{TLS: tlsCfg}, handler)
+	lc := listener.Config{TLS: tlsCfg}
+	servers, err := listener.Build(lc, handler)
 	if err != nil {
 		log.Printf("listener: %v", err)
 		return 1
@@ -226,6 +227,7 @@ func runForegroundDaemon(name, configPath, socketFlag string, force bool) int {
 		Domain: func() string {
 			return currentDomain.Load().(string)
 		},
+		PlainHTTP: lc.TLS == nil,
 	})
 	if err := sockSrv.Listen(sockPath); err != nil {
 		log.Printf("sockserver: %v", err)
