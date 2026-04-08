@@ -16,6 +16,7 @@ const (
 	OpRegister Op = "register"
 	OpList     Op = "list"
 	OpBye      Op = "bye"
+	OpShutdown Op = "shutdown"
 )
 
 // Message is the union of every NDJSON message both directions can carry.
