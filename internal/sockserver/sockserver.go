@@ -20,10 +20,20 @@ import (
 	"github.com/Limetric/hostmux/internal/sockproto"
 )
 
+// Options configures a Server on construction.
+type Options struct {
+	// OnShutdown, if non-nil, is invoked in its own goroutine after the
+	// server replies to an OpShutdown message. The daemon wires this to
+	// its main-loop context cancel, triggering the same teardown path as
+	// a SIGTERM.
+	OnShutdown func()
+}
+
 // Server is the daemon-side Unix socket server. Each connection owns the
 // hostnames it registered; on disconnect the daemon removes them.
 type Server struct {
-	router *router.Router
+	router     *router.Router
+	onShutdown func()
 
 	mu     sync.Mutex
 	ln     net.Listener
@@ -31,9 +41,9 @@ type Server struct {
 	connID atomic.Uint64
 }
 
-// New returns a Server bound to the given router.
-func New(r *router.Router) *Server {
-	return &Server{router: r}
+// New returns a Server bound to the given router and options.
+func New(r *router.Router, opts Options) *Server {
+	return &Server{router: r, onShutdown: opts.OnShutdown}
 }
 
 // Listen creates the Unix socket at path. Removes any stale socket file first.
@@ -121,6 +131,16 @@ func (s *Server) serveConn(c net.Conn) {
 			_ = enc.Encode(&sockproto.Message{Ok: true, Entries: out})
 		case sockproto.OpBye:
 			_ = enc.Encode(&sockproto.Message{Ok: true})
+			return
+		case sockproto.OpShutdown:
+			_ = enc.Encode(&sockproto.Message{Ok: true})
+			// Fire the callback in its own goroutine so this handler
+			// returns before the daemon starts tearing down the listener.
+			// Otherwise the sockserver Close could block waiting for this
+			// very handler to finish.
+			if s.onShutdown != nil {
+				go s.onShutdown()
+			}
 			return
 		default:
 			_ = enc.Encode(&sockproto.Message{Ok: false, Error: fmt.Sprintf("unknown op %q", msg.Op)})

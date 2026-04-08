@@ -28,7 +28,7 @@ func startServer(t *testing.T) (path string, r *router.Router, srv *Server) {
 	t.Helper()
 	path = filepath.Join(shortTempDir(t), "t.sock")
 	r = router.New()
-	srv = New(r)
+	srv = New(r, Options{})
 	if err := srv.Listen(path); err != nil {
 		t.Fatalf("Listen: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestListReturnsAllEntries(t *testing.T) {
 func TestServerCancellableViaContext(t *testing.T) {
 	path := filepath.Join(shortTempDir(t), "ctx.sock")
 	r := router.New()
-	srv := New(r)
+	srv := New(r, Options{})
 	if err := srv.Listen(path); err != nil {
 		t.Fatal(err)
 	}
@@ -152,4 +152,39 @@ func TestServerCancellableViaContext(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("server did not exit after Close")
+}
+
+func TestShutdownOpInvokesCallback(t *testing.T) {
+	path := filepath.Join(shortTempDir(t), "sd.sock")
+	r := router.New()
+	var fired atomic.Bool
+	srv := New(r, Options{OnShutdown: func() { fired.Store(true) }})
+	if err := srv.Listen(path); err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve()
+	t.Cleanup(func() { srv.Close() })
+
+	c := dial(t, path)
+	defer c.Close()
+	enc := sockproto.NewEncoder(c)
+	dec := sockproto.NewDecoder(c)
+	if err := enc.Encode(&sockproto.Message{Op: sockproto.OpShutdown}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := dec.Decode()
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.Ok {
+		t.Fatalf("not ok: %s", resp.Error)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if fired.Load() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("OnShutdown callback was not invoked within 1s")
 }
