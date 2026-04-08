@@ -110,6 +110,26 @@ func TestWriteAndRemoveDiscoveryFile(t *testing.T) {
 	}
 }
 
+func TestPIDFilePathFor(t *testing.T) {
+	cases := []struct {
+		name string
+		sock string
+		want string
+	}{
+		{"dotSockSuffixReplaced", "/tmp/hm/hostmux.sock", "/tmp/hm/hostmux.pid"},
+		{"noSockSuffixAppended", "/tmp/hm/custom", "/tmp/hm/custom.pid"},
+		{"sockInMiddleNotTouched", "/tmp/hm/my.sock.thing", "/tmp/hm/my.sock.thing.pid"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := PIDFilePathFor(tc.sock)
+			if got != tc.want {
+				t.Fatalf("PIDFilePathFor(%q) = %q, want %q", tc.sock, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestIsExplicit(t *testing.T) {
 	t.Setenv("HOSTMUX_SOCKET", "")
 	if IsExplicit(Options{}) {

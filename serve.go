@@ -90,7 +90,7 @@ func cmdServe(args []string) int {
 	// next to the socket so daemons on different sockets coexist; the flock
 	// makes "two daemons on the same socket" detect each other and the
 	// loser exits cleanly with no error.
-	pidPath := pidFilePathFor(sockPath)
+	pidPath := sockpath.PIDFilePathFor(sockPath)
 	pidLock, contention, err := acquirePIDLock(pidPath)
 	if err != nil {
 		log.Printf("hostmux serve: pid lock: %v", err)
@@ -196,23 +196,6 @@ func defaultConfigPath() string {
 		return filepath.Join(home, ".config", "hostmux", "hostmux.toml")
 	}
 	return ""
-}
-
-// pidFilePathFor returns the PID file path co-located with the given Unix
-// socket path. The PID file lives in the same directory as the socket so
-// two daemons on different sockets do not contend on the same lock. If
-// the socket name ends in ".sock" the suffix is replaced with ".pid"
-// (giving the canonical "~/.hostmux/hostmux.pid" for the default socket);
-// otherwise ".pid" is appended.
-func pidFilePathFor(sockPath string) string {
-	dir := filepath.Dir(sockPath)
-	base := filepath.Base(sockPath)
-	if filepath.Ext(base) == ".sock" {
-		base = base[:len(base)-len(".sock")] + ".pid"
-	} else {
-		base = base + ".pid"
-	}
-	return filepath.Join(dir, base)
 }
 
 // acquirePIDLock attempts to take an exclusive flock on the PID file. It

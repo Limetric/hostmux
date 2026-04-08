@@ -131,6 +131,23 @@ func hostmuxDir() (string, error) {
 	return filepath.Join(home, ".hostmux"), nil
 }
 
+// PIDFilePathFor returns the PID file path co-located with the given Unix
+// socket path. The PID file lives in the same directory as the socket so
+// two daemons on different sockets do not contend on the same lock. If
+// the socket name ends in ".sock" the suffix is replaced with ".pid"
+// (giving the canonical "~/.hostmux/hostmux.pid" for the default socket);
+// otherwise ".pid" is appended.
+func PIDFilePathFor(sockPath string) string {
+	dir := filepath.Dir(sockPath)
+	base := filepath.Base(sockPath)
+	if filepath.Ext(base) == ".sock" {
+		base = base[:len(base)-len(".sock")] + ".pid"
+	} else {
+		base = base + ".pid"
+	}
+	return filepath.Join(dir, base)
+}
+
 func expandHome(p string) (string, error) {
 	if !strings.HasPrefix(p, "~/") {
 		return p, nil
