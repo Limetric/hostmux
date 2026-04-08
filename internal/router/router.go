@@ -39,6 +39,13 @@ func New() *Router {
 	}
 }
 
+// Count returns the total number of registered hostnames across all sources.
+func (r *Router) Count() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.byHost)
+}
+
 // Lookup returns the upstream URL for a host, or false if not registered.
 func (r *Router) Lookup(host string) (string, bool) {
 	r.mu.RLock()

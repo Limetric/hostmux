@@ -150,6 +150,12 @@ func (w *Watcher) Run(ctx context.Context, onReload func(*Config), onError func(
 				w.mu.Lock()
 				w.current = cfg
 				w.mu.Unlock()
+				// Re-add the watch — atomic-save editors (vim, IntelliJ) replace the
+				// file via rename, which detaches the inotify/kqueue watch from the
+				// original inode. Re-adding the path ensures we keep getting events
+				// for subsequent saves.
+				_ = w.w.Remove(w.path)
+				_ = w.w.Add(w.path)
 				if onReload != nil {
 					onReload(cfg)
 				}

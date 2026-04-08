@@ -22,7 +22,7 @@ func New(r *router.Router) http.Handler {
 		host := stripPort(req.Host)
 		upstream, ok := r.Lookup(host)
 		if !ok {
-			http.Error(w, fmt.Sprintf("no upstream for host %q", host), http.StatusNotFound)
+			http.Error(w, fmt.Sprintf("no upstream for host %q (%d host(s) registered)", host, r.Count()), http.StatusNotFound)
 			return
 		}
 		target, err := url.Parse(upstream)

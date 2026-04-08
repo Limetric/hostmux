@@ -150,6 +150,22 @@ func TestSnapshotReturnsAllEntriesSorted(t *testing.T) {
 	}
 }
 
+func TestCount(t *testing.T) {
+	r := New()
+	if r.Count() != 0 {
+		t.Fatalf("empty count = %d", r.Count())
+	}
+	_ = r.Add("config", []string{"a.test", "b.test"}, "http://127.0.0.1:1")
+	_ = r.Add("socket:1", []string{"c.test"}, "http://127.0.0.1:2")
+	if r.Count() != 3 {
+		t.Fatalf("count = %d, want 3", r.Count())
+	}
+	r.RemoveBySource("config")
+	if r.Count() != 1 {
+		t.Fatalf("count after remove = %d, want 1", r.Count())
+	}
+}
+
 func TestConcurrentAddLookup(t *testing.T) {
 	r := New()
 	var wg sync.WaitGroup
