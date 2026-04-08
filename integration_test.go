@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -207,7 +208,7 @@ func TestStop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stop: %v\n%s", err, out)
 	}
-	if !containsLine(string(out), "stopped daemon") {
+	if !containsSubstring(string(out), "stopped daemon") {
 		t.Fatalf("expected 'stopped daemon' line, got: %s", out)
 	}
 
@@ -246,13 +247,13 @@ func TestStopIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stop: %v\n%s", err, out)
 	}
-	if !containsLine(string(out), "no daemon running") {
+	if !containsSubstring(string(out), "no daemon running") {
 		t.Fatalf("expected 'no daemon running', got: %s", out)
 	}
 }
 
 func TestServeForce(t *testing.T) {
-	bin, sockPath, firstCmd, cleanup := startDaemonForStopTest(t)
+	bin, sockPath, firstWait, cleanup := startDaemonForStopTest(t)
 	defer cleanup()
 
 	// Start a second serve with --force pointing at the same socket. Use
@@ -275,11 +276,16 @@ func TestServeForce(t *testing.T) {
 		_ = second.Wait()
 	})
 
-	// First daemon should exit on its own.
-	exited := make(chan error, 1)
-	go func() { exited <- firstCmd.Wait() }()
+	// First daemon should exit on its own after --force takeover.
+	// firstWait is serialized through sync.Once, so calling it from
+	// this goroutine (and later from cleanup) is safe.
+	firstExited := make(chan struct{})
+	go func() {
+		firstWait()
+		close(firstExited)
+	}()
 	select {
-	case <-exited:
+	case <-firstExited:
 	case <-time.After(8 * time.Second):
 		t.Fatal("first daemon did not exit after serve --force")
 	}
@@ -311,14 +317,20 @@ func TestServeWithoutForceContention(t *testing.T) {
 }
 
 // startDaemonForStopTest builds the binary, starts a daemon on a temp socket,
-// waits for the socket to come up, and returns (bin, sockPath, daemonCmd, cleanup).
-// The cleanup func cancels the daemon's context and waits. Used by stop/force tests
-// that do NOT need the full TLS/config setup of TestEndToEnd.
+// waits for the socket to come up, and returns (bin, sockPath, waitOnce, cleanup).
+// Used by stop/force tests that do NOT need the full TLS/config setup of TestEndToEnd.
+//
+// waitOnce blocks until the daemon exits and returns its error. It is gated
+// through sync.Once so multiple callers (test code + cleanup) can safely ask
+// for the exit status without racing on cmd.Wait — Go's stdlib documents
+// concurrent Wait calls as unsafe.
+//
+// cleanup cancels the daemon's context and drains waitOnce (with a timeout).
 //
 // A tiny config file is written pointing the HTTP listener at 127.0.0.1:0 so
 // these tests do not contend with anything already on :8080 and so parallel
 // runs of the serve/force tests do not collide on a fixed port.
-func startDaemonForStopTest(t *testing.T) (bin, sockPath string, cmd *exec.Cmd, cleanup func()) {
+func startDaemonForStopTest(t *testing.T) (bin, sockPath string, waitOnce func() error, cleanup func()) {
 	t.Helper()
 	binDir := t.TempDir()
 	bin = filepath.Join(binDir, "hostmux")
@@ -339,7 +351,7 @@ func startDaemonForStopTest(t *testing.T) (bin, sockPath string, cmd *exec.Cmd, 
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd = exec.CommandContext(ctx, bin, "serve", "--config", cfgPath, "--socket", sockPath)
+	cmd := exec.CommandContext(ctx, bin, "serve", "--config", cfgPath, "--socket", sockPath)
 	cmd.Stdout = testWriter{t}
 	cmd.Stderr = testWriter{t}
 	if err := cmd.Start(); err != nil {
@@ -347,14 +359,33 @@ func startDaemonForStopTest(t *testing.T) (bin, sockPath string, cmd *exec.Cmd, 
 		t.Fatalf("start daemon: %v", err)
 	}
 	waitForSocket(t, sockPath, 5*time.Second)
+
+	// Gate cmd.Wait through a sync.Once so both tests and cleanup can
+	// request the exit result safely without double-Wait.
+	var once sync.Once
+	var waitErr error
+	waitOnce = func() error {
+		once.Do(func() { waitErr = cmd.Wait() })
+		return waitErr
+	}
+
 	cleanup = func() {
 		cancel()
-		_ = cmd.Wait()
+		done := make(chan struct{})
+		go func() {
+			waitOnce()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Logf("daemon wait timed out during cleanup")
+		}
 	}
 	return
 }
 
-func containsLine(output, needle string) bool {
+func containsSubstring(output, needle string) bool {
 	return strings.Contains(output, needle)
 }
 
