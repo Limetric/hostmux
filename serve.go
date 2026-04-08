@@ -6,10 +6,13 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -59,8 +62,8 @@ func cmdStart(args []string) int {
 		return 0
 	}
 
-	if err := daemon.SpawnDetached(spawnArgs...); err != nil {
-		fmt.Fprintf(os.Stderr, "hostmux start: %v\n", err)
+	if err := startForcedDetachedDaemon(sockPath, spawnArgs); err != nil {
+		fmt.Fprintf(os.Stderr, "hostmux start: could not start daemon: %v\n", err)
 		return 1
 	}
 	return 0
@@ -79,27 +82,26 @@ func runForegroundDaemon(name, configPath, socketFlag string, force bool) int {
 	r := router.New()
 
 	// Optional config file. If not provided, look in standard locations.
-	resolvedConfigPath := configPath
-	if resolvedConfigPath == "" {
-		resolvedConfigPath = defaultConfigPath()
+	resolvedConfigPath := resolveConfigPath(configPath)
+	cfg, err := loadOptionalConfig(resolvedConfigPath)
+	if err != nil {
+		log.Printf("config: %v", err)
+		return 1
 	}
-	var cfg *config.Config
 	var watcher *config.Watcher
-	if resolvedConfigPath != "" {
-		if _, err := os.Stat(resolvedConfigPath); err == nil {
-			w, err := config.NewWatcher(resolvedConfigPath)
-			if err != nil {
-				log.Printf("config: %v", err)
-				return 1
-			}
-			watcher = w
-			cfg = w.Current()
-			if err := r.ReplaceSource("config", cfg.RouterEntries()); err != nil {
-				log.Printf("config: initial load rejected: %v", err)
-				return 1
-			}
-			log.Printf("config: loaded %s (%d apps)", resolvedConfigPath, len(cfg.Apps))
+	if cfg != nil {
+		w, err := config.NewWatcher(resolvedConfigPath)
+		if err != nil {
+			log.Printf("config: %v", err)
+			return 1
 		}
+		watcher = w
+		cfg = w.Current()
+		if err := r.ReplaceSource("config", cfg.RouterEntries()); err != nil {
+			log.Printf("config: initial load rejected: %v", err)
+			return 1
+		}
+		log.Printf("config: loaded %s (%d apps)", resolvedConfigPath, len(cfg.Apps))
 	}
 
 	// Resolve listen address and TLS material.
@@ -291,29 +293,64 @@ func startForegroundArgs(configPath, socketFlag string, force bool) []string {
 	return args
 }
 
-func resolveServeSocketPath(configPath, socketFlag string) (string, error) {
-	resolvedConfigPath := configPath
-	if resolvedConfigPath == "" {
-		resolvedConfigPath = defaultConfigPath()
+func startForcedDetachedDaemon(sockPath string, spawnArgs []string) error {
+	oldPID, _ := readPIDFile(sockpath.PIDFilePathFor(sockPath))
+	if err := daemon.SpawnDetached(spawnArgs...); err != nil {
+		return err
 	}
+	return waitForReplacementDaemon(sockPath, sockpath.PIDFilePathFor(sockPath), oldPID, 5*time.Second)
+}
 
-	configSocket := ""
-	if resolvedConfigPath != "" {
-		if _, err := os.Stat(resolvedConfigPath); err == nil {
-			cfg, err := config.Load(resolvedConfigPath)
-			if err != nil {
-				return "", err
+func waitForReplacementDaemon(sockPath, pidPath string, oldPID int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if pid, err := readPIDFile(pidPath); err == nil && pid != 0 && pid != oldPID {
+			conn, err := net.DialTimeout("unix", sockPath, 100*time.Millisecond)
+			if err == nil {
+				conn.Close()
+				return nil
 			}
-			configSocket = cfg.Socket
-		} else if !os.IsNotExist(err) {
-			return "", err
 		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return fmt.Errorf("timed out waiting for replacement daemon on %s", sockPath)
+}
+
+func resolveServeSocketPath(configPath, socketFlag string) (string, error) {
+	resolvedConfigPath := resolveConfigPath(configPath)
+	configSocket := ""
+	cfg, err := loadOptionalConfig(resolvedConfigPath)
+	if err != nil {
+		return "", err
+	}
+	if cfg != nil {
+		configSocket = cfg.Socket
 	}
 
 	return sockpath.ResolveServe(sockpath.Options{
 		Flag:         socketFlag,
 		ConfigSocket: configSocket,
 	})
+}
+
+func resolveConfigPath(configPath string) string {
+	if configPath != "" {
+		return configPath
+	}
+	return defaultConfigPath()
+}
+
+func loadOptionalConfig(path string) (*config.Config, error) {
+	if path == "" {
+		return nil, nil
+	}
+	if _, err := os.Stat(path); err == nil {
+		return config.Load(path)
+	} else if os.IsNotExist(err) {
+		return nil, nil
+	} else {
+		return nil, err
+	}
 }
 
 func defaultConfigPath() string {
@@ -366,4 +403,16 @@ func acquirePIDLock(path string) (*os.File, bool, error) {
 func pathExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func readPIDFile(path string) (int, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		return 0, err
+	}
+	return pid, nil
 }

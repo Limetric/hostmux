@@ -82,7 +82,6 @@ hosts = ["admin", "admin.other.test"]
 upstream = "http://127.0.0.1:9000"
 ```
 
-<<<<<<< HEAD
 Bare `hosts` entries expand against the top-level `domain`; entries that already contain a dot are treated as full hostnames and kept unchanged.
 
 Run with `hostmux start --config /path/to/hostmux.toml`. The file is hot-reloaded on save.

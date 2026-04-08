@@ -202,7 +202,7 @@ func TestRunInheritsDomainFromDaemonConfig(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	daemonCmd := exec.CommandContext(ctx, bin, "serve", "--config", cfgPath, "--socket", sockPath)
+	daemonCmd := exec.CommandContext(ctx, bin, "start", "--foreground", "--config", cfgPath, "--socket", sockPath)
 	daemonCmd.Env = env
 	daemonCmd.Stdout = testWriter{t}
 	daemonCmd.Stderr = testWriter{t}
@@ -422,6 +422,42 @@ func TestStartForeground(t *testing.T) {
 		t.Fatalf("wait start --foreground: %v", err)
 	}
 	waitForSocketGone(t, sockPath, 3*time.Second)
+}
+
+func TestStartForceReportsStartupFailure(t *testing.T) {
+	bin, sockPath, env, _, cleanup := startDaemonForStopTest(t)
+	defer cleanup()
+
+	home := ""
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "HOME=") {
+			home = strings.TrimPrefix(entry, "HOME=")
+			break
+		}
+	}
+	if home == "" {
+		t.Fatal("HOME not found in test env")
+	}
+	tlsDir := filepath.Join(home, ".hostmux", "tls")
+	if err := os.MkdirAll(tlsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tlsDir, "hostmux.crt"), []byte("bad cert"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tlsDir, "hostmux.key"), []byte("bad key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	start := exec.Command(bin, "start", "--force", "--socket", sockPath)
+	start.Env = env
+	out, err := start.CombinedOutput()
+	if err == nil {
+		t.Fatalf("start --force unexpectedly succeeded\n%s", out)
+	}
+	if !containsSubstring(string(out), "could not start daemon") {
+		t.Fatalf("expected startup failure message, got: %s", out)
+	}
 }
 
 func TestServeForce(t *testing.T) {
