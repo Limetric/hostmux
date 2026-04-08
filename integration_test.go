@@ -13,10 +13,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"golang.org/x/net/http2"
+	"golang.org/x/sys/unix"
 
 	"github.com/Limetric/hostmux/internal/sockproto"
 )
@@ -193,4 +195,190 @@ type testWriter struct{ t *testing.T }
 func (w testWriter) Write(p []byte) (int, error) {
 	w.t.Logf("daemon: %s", p)
 	return len(p), nil
+}
+
+func TestStop(t *testing.T) {
+	bin, sockPath, _, cleanup := startDaemonForStopTest(t)
+	defer cleanup()
+
+	// Run `hostmux stop` and assert it exits 0 and logs a "stopped" message.
+	stop := exec.Command(bin, "stop", "--socket", sockPath)
+	out, err := stop.CombinedOutput()
+	if err != nil {
+		t.Fatalf("stop: %v\n%s", err, out)
+	}
+	if !containsLine(string(out), "stopped daemon") {
+		t.Fatalf("expected 'stopped daemon' line, got: %s", out)
+	}
+
+	// Socket file should be gone shortly.
+	waitForSocketGone(t, sockPath, 3*time.Second)
+
+	// PID file flock should be releasable.
+	pidPath := sockPath[:len(sockPath)-len(".sock")] + ".pid"
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if canAcquireFlock(pidPath) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("pid file flock still held after stop")
+}
+
+func TestStopIdempotent(t *testing.T) {
+	// Build the binary but do NOT start a daemon.
+	binDir := t.TempDir()
+	bin := filepath.Join(binDir, "hostmux")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+	sockDir, err := os.MkdirTemp("", "hm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(sockDir) })
+	sockPath := filepath.Join(sockDir, "t.sock")
+
+	stop := exec.Command(bin, "stop", "--socket", sockPath)
+	out, err := stop.CombinedOutput()
+	if err != nil {
+		t.Fatalf("stop: %v\n%s", err, out)
+	}
+	if !containsLine(string(out), "no daemon running") {
+		t.Fatalf("expected 'no daemon running', got: %s", out)
+	}
+}
+
+func TestServeForce(t *testing.T) {
+	bin, sockPath, firstCmd, cleanup := startDaemonForStopTest(t)
+	defer cleanup()
+
+	// Start a second serve with --force pointing at the same socket. Use
+	// the same ephemeral-port config so we don't contend on :8080.
+	logDir := t.TempDir()
+	cfgPath := filepath.Join(logDir, "hostmux.toml")
+	if err := os.WriteFile(cfgPath, []byte("listen = \"127.0.0.1:0\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	second := exec.CommandContext(ctx, bin, "serve", "--config", cfgPath, "--socket", sockPath, "--force")
+	second.Stdout = testWriter{t}
+	second.Stderr = testWriter{t}
+	if err := second.Start(); err != nil {
+		t.Fatalf("start second: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = second.Process.Kill()
+		_ = second.Wait()
+	})
+
+	// First daemon should exit on its own.
+	exited := make(chan error, 1)
+	go func() { exited <- firstCmd.Wait() }()
+	select {
+	case <-exited:
+	case <-time.After(8 * time.Second):
+		t.Fatal("first daemon did not exit after serve --force")
+	}
+
+	// Second daemon's socket should come up.
+	waitForSocket(t, sockPath, 5*time.Second)
+
+	// hostmux list against the second daemon should succeed.
+	list := exec.Command(bin, "list", "--socket", sockPath)
+	if out, err := list.CombinedOutput(); err != nil {
+		t.Fatalf("list: %v\n%s", err, out)
+	}
+}
+
+func TestServeWithoutForceContention(t *testing.T) {
+	bin, sockPath, _, cleanup := startDaemonForStopTest(t)
+	defer cleanup()
+
+	// Start a second serve WITHOUT --force. It should exit 0 immediately.
+	ctx, ctxCancel := context.WithCancel(context.Background())
+	defer ctxCancel()
+	second := exec.CommandContext(ctx, bin, "serve", "--socket", sockPath)
+	second.Stdout = testWriter{t}
+	second.Stderr = testWriter{t}
+	if err := second.Run(); err != nil {
+		t.Fatalf("second serve exited non-zero: %v", err)
+	}
+	// If we got here, it exited 0 as expected.
+}
+
+// startDaemonForStopTest builds the binary, starts a daemon on a temp socket,
+// waits for the socket to come up, and returns (bin, sockPath, daemonCmd, cleanup).
+// The cleanup func cancels the daemon's context and waits. Used by stop/force tests
+// that do NOT need the full TLS/config setup of TestEndToEnd.
+//
+// A tiny config file is written pointing the HTTP listener at 127.0.0.1:0 so
+// these tests do not contend with anything already on :8080 and so parallel
+// runs of the serve/force tests do not collide on a fixed port.
+func startDaemonForStopTest(t *testing.T) (bin, sockPath string, cmd *exec.Cmd, cleanup func()) {
+	t.Helper()
+	binDir := t.TempDir()
+	bin = filepath.Join(binDir, "hostmux")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+	sockDir, err := os.MkdirTemp("", "hm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(sockDir) })
+	sockPath = filepath.Join(sockDir, "t.sock")
+
+	cfgPath := filepath.Join(binDir, "hostmux.toml")
+	if err := os.WriteFile(cfgPath, []byte("listen = \"127.0.0.1:0\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd = exec.CommandContext(ctx, bin, "serve", "--config", cfgPath, "--socket", sockPath)
+	cmd.Stdout = testWriter{t}
+	cmd.Stderr = testWriter{t}
+	if err := cmd.Start(); err != nil {
+		cancel()
+		t.Fatalf("start daemon: %v", err)
+	}
+	waitForSocket(t, sockPath, 5*time.Second)
+	cleanup = func() {
+		cancel()
+		_ = cmd.Wait()
+	}
+	return
+}
+
+func containsLine(output, needle string) bool {
+	return strings.Contains(output, needle)
+}
+
+func waitForSocketGone(t *testing.T, path string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("socket %s still present after %v", path, timeout)
+}
+
+func canAcquireFlock(path string) bool {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		return false
+	}
+	_ = unix.Flock(int(f.Fd()), unix.LOCK_UN)
+	return true
 }
