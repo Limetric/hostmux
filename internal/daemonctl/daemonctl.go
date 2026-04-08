@@ -6,12 +6,15 @@ package daemonctl
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/Limetric/hostmux/internal/sockproto"
 )
 
 // probeFlock reports whether another process currently holds an exclusive
@@ -75,4 +78,119 @@ func readPID(path string) (int, error) {
 		return 0, fmt.Errorf("invalid pid %d", pid)
 	}
 	return pid, nil
+}
+
+// StopOptions configures a Stop call.
+type StopOptions struct {
+	// SockPath is the Unix socket the daemon listens on. Stop tries to
+	// dial this first for a graceful OpShutdown before falling back to
+	// the PID-file SIGTERM path.
+	SockPath string
+	// PIDPath is the path to the PID file the daemon holds a flock on.
+	// This is the authoritative "is a daemon running" signal.
+	PIDPath string
+	// GracefulTimeout is how long to wait after asking the daemon to
+	// shut down before escalating to SIGKILL. Defaults to 5 seconds.
+	GracefulTimeout time.Duration
+	// KillTimeout is how long to wait after SIGKILL before giving up.
+	// Defaults to 2 seconds.
+	KillTimeout time.Duration
+}
+
+// StopResult reports what happened in a Stop call.
+type StopResult struct {
+	// NotRunning is true when no daemon was holding the PID-file flock at
+	// call time. In that case Stop is a successful no-op.
+	NotRunning bool
+	// UsedSocket is true when the graceful OpShutdown path succeeded.
+	UsedSocket bool
+	// UsedSIGKILL is true when the graceful path timed out and Stop had
+	// to escalate to SIGKILL.
+	UsedSIGKILL bool
+}
+
+// Stop attempts to gracefully shut down a hostmux daemon identified by the
+// given socket + PID file paths. Returns a result describing the outcome.
+// Returns nil error both when a daemon was successfully stopped AND when no
+// daemon was running (check res.NotRunning to distinguish).
+func Stop(opts StopOptions) (StopResult, error) {
+	if opts.GracefulTimeout == 0 {
+		opts.GracefulTimeout = 5 * time.Second
+	}
+	if opts.KillTimeout == 0 {
+		opts.KillTimeout = 2 * time.Second
+	}
+	var res StopResult
+
+	// 1. Probe the flock. If nobody holds it, there's no daemon.
+	held, err := probeFlock(opts.PIDPath)
+	if err != nil {
+		return res, err
+	}
+	if !held {
+		res.NotRunning = true
+		return res, nil
+	}
+
+	// 2. Try the graceful socket path.
+	if err := askSocketShutdown(opts.SockPath); err == nil {
+		res.UsedSocket = true
+	} else {
+		// Fall through to the SIGTERM path.
+		if sigErr := sendSignal(opts.PIDPath, unix.SIGTERM); sigErr != nil {
+			return res, fmt.Errorf("graceful shutdown failed (%v) and SIGTERM failed: %w", err, sigErr)
+		}
+	}
+
+	// 3. Wait for the daemon to release the flock.
+	if err := waitForFlockRelease(opts.PIDPath, opts.GracefulTimeout); err == nil {
+		return res, nil
+	}
+
+	// 4. Escalate to SIGKILL.
+	res.UsedSIGKILL = true
+	if err := sendSignal(opts.PIDPath, unix.SIGKILL); err != nil {
+		return res, fmt.Errorf("SIGKILL: %w", err)
+	}
+	if err := waitForFlockRelease(opts.PIDPath, opts.KillTimeout); err != nil {
+		return res, fmt.Errorf("daemon did not exit even after SIGKILL: %w", err)
+	}
+	return res, nil
+}
+
+// askSocketShutdown dials the Unix socket and sends an OpShutdown message,
+// expecting an ok reply. Returns an error if the socket is missing, the
+// dial fails, the write fails, or the daemon replies non-ok.
+func askSocketShutdown(sockPath string) error {
+	conn, err := net.DialTimeout("unix", sockPath, 500*time.Millisecond)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(500 * time.Millisecond))
+	enc := sockproto.NewEncoder(conn)
+	dec := sockproto.NewDecoder(conn)
+	if err := enc.Encode(&sockproto.Message{Op: sockproto.OpShutdown}); err != nil {
+		return err
+	}
+	resp, err := dec.Decode()
+	if err != nil {
+		return err
+	}
+	if !resp.Ok {
+		return fmt.Errorf("shutdown rejected: %s", resp.Error)
+	}
+	return nil
+}
+
+// sendSignal reads the PID from the PID file and delivers the given signal.
+func sendSignal(pidPath string, sig unix.Signal) error {
+	pid, err := readPID(pidPath)
+	if err != nil {
+		return err
+	}
+	if err := unix.Kill(pid, sig); err != nil {
+		return fmt.Errorf("kill %d: %w", pid, err)
+	}
+	return nil
 }
