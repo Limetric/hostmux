@@ -1,4 +1,45 @@
-// main.go
 package main
 
-func main() {}
+import (
+	"fmt"
+	"os"
+)
+
+func main() {
+	if len(os.Args) < 2 {
+		usage()
+		os.Exit(2)
+	}
+	sub := os.Args[1]
+	args := os.Args[2:]
+	var code int
+	switch sub {
+	case "serve":
+		code = cmdServe(args)
+	case "run":
+		code = cmdRun(args)
+	case "list":
+		code = cmdList(args)
+	case "version", "-v", "--version":
+		code = cmdVersion(args)
+	case "help", "-h", "--help":
+		usage()
+		code = 0
+	default:
+		fmt.Fprintf(os.Stderr, "hostmux: unknown subcommand %q\n", sub)
+		usage()
+		code = 2
+	}
+	os.Exit(code)
+}
+
+func usage() {
+	fmt.Fprint(os.Stderr, `hostmux — host-routed reverse proxy
+
+usage:
+  hostmux serve [--config PATH] [--socket PATH]
+  hostmux run HOSTS [--socket PATH] [--prefix NAME | --no-prefix] -- COMMAND [ARGS...]
+  hostmux list [--socket PATH]
+  hostmux version
+`)
+}
