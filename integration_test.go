@@ -25,6 +25,8 @@ import (
 )
 
 func TestEndToEnd(t *testing.T) {
+	env, _ := isolatedHostmuxEnv(t)
+
 	// 1. Build the binary into a tmp dir.
 	binDir := t.TempDir()
 	bin := filepath.Join(binDir, "hostmux")
@@ -59,6 +61,7 @@ func TestEndToEnd(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	daemonCmd := exec.CommandContext(ctx, bin, "serve", "--config", cfgPath, "--socket", sockPath)
+	daemonCmd.Env = env
 	daemonCmd.Stdout = testWriter{t}
 	daemonCmd.Stderr = testWriter{t}
 	if err := daemonCmd.Start(); err != nil {
@@ -199,11 +202,12 @@ func (w testWriter) Write(p []byte) (int, error) {
 }
 
 func TestStop(t *testing.T) {
-	bin, sockPath, _, cleanup := startDaemonForStopTest(t)
+	bin, sockPath, env, _, cleanup := startDaemonForStopTest(t)
 	defer cleanup()
 
 	// Run `hostmux stop` and assert it exits 0 and logs a "stopped" message.
 	stop := exec.Command(bin, "stop", "--socket", sockPath)
+	stop.Env = env
 	out, err := stop.CombinedOutput()
 	if err != nil {
 		t.Fatalf("stop: %v\n%s", err, out)
@@ -228,6 +232,8 @@ func TestStop(t *testing.T) {
 }
 
 func TestStopIdempotent(t *testing.T) {
+	env, _ := isolatedHostmuxEnv(t)
+
 	// Build the binary but do NOT start a daemon.
 	binDir := t.TempDir()
 	bin := filepath.Join(binDir, "hostmux")
@@ -243,6 +249,7 @@ func TestStopIdempotent(t *testing.T) {
 	sockPath := filepath.Join(sockDir, "t.sock")
 
 	stop := exec.Command(bin, "stop", "--socket", sockPath)
+	stop.Env = env
 	out, err := stop.CombinedOutput()
 	if err != nil {
 		t.Fatalf("stop: %v\n%s", err, out)
@@ -253,7 +260,7 @@ func TestStopIdempotent(t *testing.T) {
 }
 
 func TestServeForce(t *testing.T) {
-	bin, sockPath, firstWait, cleanup := startDaemonForStopTest(t)
+	bin, sockPath, env, firstWait, cleanup := startDaemonForStopTest(t)
 	defer cleanup()
 
 	// Start a second serve with --force pointing at the same socket. Use
@@ -266,6 +273,7 @@ func TestServeForce(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	second := exec.CommandContext(ctx, bin, "serve", "--config", cfgPath, "--socket", sockPath, "--force")
+	second.Env = env
 	second.Stdout = testWriter{t}
 	second.Stderr = testWriter{t}
 	if err := second.Start(); err != nil {
@@ -295,25 +303,76 @@ func TestServeForce(t *testing.T) {
 
 	// hostmux list against the second daemon should succeed.
 	list := exec.Command(bin, "list", "--socket", sockPath)
+	list.Env = env
 	if out, err := list.CombinedOutput(); err != nil {
 		t.Fatalf("list: %v\n%s", err, out)
 	}
 }
 
 func TestServeWithoutForceContention(t *testing.T) {
-	bin, sockPath, _, cleanup := startDaemonForStopTest(t)
+	bin, sockPath, env, _, cleanup := startDaemonForStopTest(t)
 	defer cleanup()
 
 	// Start a second serve WITHOUT --force. It should exit 0 immediately.
 	ctx, ctxCancel := context.WithCancel(context.Background())
 	defer ctxCancel()
 	second := exec.CommandContext(ctx, bin, "serve", "--socket", sockPath)
+	second.Env = env
 	second.Stdout = testWriter{t}
 	second.Stderr = testWriter{t}
 	if err := second.Run(); err != nil {
 		t.Fatalf("second serve exited non-zero: %v", err)
 	}
 	// If we got here, it exited 0 as expected.
+}
+
+func TestStopFallsBackFromStaleDiscovery(t *testing.T) {
+	env, home := isolatedHostmuxEnv(t)
+
+	binDir := t.TempDir()
+	bin := filepath.Join(binDir, "hostmux")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+
+	cfgPath := filepath.Join(binDir, "hostmux.toml")
+	if err := os.WriteFile(cfgPath, []byte("listen = \"127.0.0.1:0\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	daemonCmd := exec.CommandContext(ctx, bin, "serve", "--config", cfgPath)
+	daemonCmd.Env = env
+	daemonCmd.Stdout = testWriter{t}
+	daemonCmd.Stderr = testWriter{t}
+	if err := daemonCmd.Start(); err != nil {
+		t.Fatalf("start daemon: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = daemonCmd.Process.Kill()
+		_ = daemonCmd.Wait()
+	})
+
+	defaultSock := filepath.Join(home, ".hostmux", "hostmux.sock")
+	waitForSocket(t, defaultSock, 5*time.Second)
+
+	discoveryPath := filepath.Join(home, ".hostmux", "socket")
+	if err := os.WriteFile(discoveryPath, []byte(filepath.Join(t.TempDir(), "stale.sock")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stop := exec.Command(bin, "stop")
+	stop.Env = env
+	out, err := stop.CombinedOutput()
+	if err != nil {
+		t.Fatalf("stop: %v\n%s", err, out)
+	}
+	if !containsSubstring(string(out), "stopped daemon") {
+		t.Fatalf("expected 'stopped daemon' line, got: %s", out)
+	}
+	waitForSocketGone(t, defaultSock, 3*time.Second)
 }
 
 // startDaemonForStopTest builds the binary, starts a daemon on a temp socket,
@@ -330,8 +389,9 @@ func TestServeWithoutForceContention(t *testing.T) {
 // A tiny config file is written pointing the HTTP listener at 127.0.0.1:0 so
 // these tests do not contend with anything already on :8080 and so parallel
 // runs of the serve/force tests do not collide on a fixed port.
-func startDaemonForStopTest(t *testing.T) (bin, sockPath string, waitOnce func() error, cleanup func()) {
+func startDaemonForStopTest(t *testing.T) (bin, sockPath string, env []string, waitOnce func() error, cleanup func()) {
 	t.Helper()
+	env, _ = isolatedHostmuxEnv(t)
 	binDir := t.TempDir()
 	bin = filepath.Join(binDir, "hostmux")
 	build := exec.Command("go", "build", "-o", bin, ".")
@@ -352,6 +412,7 @@ func startDaemonForStopTest(t *testing.T) (bin, sockPath string, waitOnce func()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, bin, "serve", "--config", cfgPath, "--socket", sockPath)
+	cmd.Env = env
 	cmd.Stdout = testWriter{t}
 	cmd.Stderr = testWriter{t}
 	if err := cmd.Start(); err != nil {
@@ -383,6 +444,31 @@ func startDaemonForStopTest(t *testing.T) (bin, sockPath string, waitOnce func()
 		}
 	}
 	return
+}
+
+func isolatedHostmuxEnv(t *testing.T) ([]string, string) {
+	t.Helper()
+	home, err := os.MkdirTemp("", "hmhome")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	env := make([]string, 0, len(os.Environ())+3)
+	for _, entry := range os.Environ() {
+		switch {
+		case strings.HasPrefix(entry, "HOME="):
+		case strings.HasPrefix(entry, "XDG_RUNTIME_DIR="):
+		case strings.HasPrefix(entry, "HOSTMUX_SOCKET="):
+		default:
+			env = append(env, entry)
+		}
+	}
+	env = append(env,
+		"HOME="+home,
+		"XDG_RUNTIME_DIR=",
+		"HOSTMUX_SOCKET=",
+	)
+	return env, home
 }
 
 func containsSubstring(output, needle string) bool {

@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"golang.org/x/sys/unix"
 )
 
 // Options bundles per-invocation overrides for path resolution.
@@ -30,7 +32,10 @@ func Resolve(opts Options) (string, error) {
 		return env, nil
 	}
 	if p, ok := readDiscovery(); ok {
-		return p, nil
+		if discoveryAlive(p) {
+			return p, nil
+		}
+		_ = RemoveDiscovery()
 	}
 	return defaultSocket()
 }
@@ -121,6 +126,25 @@ func readDiscovery() (string, bool) {
 		return "", false
 	}
 	return s, true
+}
+
+func discoveryAlive(sockPath string) bool {
+	if _, err := os.Stat(sockPath); err == nil {
+		return true
+	}
+
+	pidPath := PIDFilePathFor(sockPath)
+	f, err := os.OpenFile(pidPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		return errors.Is(err, unix.EWOULDBLOCK)
+	}
+	_ = unix.Flock(int(f.Fd()), unix.LOCK_UN)
+	return false
 }
 
 func hostmuxDir() (string, error) {
