@@ -1,5 +1,5 @@
 // Package listener builds the HTTP servers the hostmux daemon listens on.
-// Always returns a plain HTTP/1.1 + h2c listener for direct clients.
+// Optionally returns a plain HTTP/1.1 + h2c listener for direct clients.
 // Optionally also returns a TLS listener that negotiates HTTP/2 via ALPN for
 // origins such as cloudflared that require HTTPS for HTTP/2-to-origin.
 package listener
@@ -13,14 +13,14 @@ import (
 
 // Config configures the daemon's HTTP listeners.
 type Config struct {
-	// Plain is the listen address for the HTTP/1.1 + h2c listener (e.g. ":8080").
+	// Plain is the optional listen address for the HTTP/1.1 + h2c listener.
 	Plain string
-	// TLS, if non-nil, enables a second HTTP/1.1 + HTTP/2 listener on the
-	// configured TLS port.
+	// TLS, if non-nil, enables an HTTP/1.1 + HTTP/2 listener on the configured
+	// TLS port.
 	TLS *TLSConfig
 }
 
-// TLSConfig configures the optional TLS listener.
+// TLSConfig configures the TLS listener.
 type TLSConfig struct {
 	Listen   string
 	CertFile string
@@ -32,13 +32,12 @@ type TLSConfig struct {
 func Build(cfg Config, h http.Handler) ([]*http.Server, error) {
 	servers := make([]*http.Server, 0, 2)
 
-	// Plain HTTP/1.1 + h2c on the same port.
-	h2s := &http2.Server{}
-	plain := &http.Server{
-		Addr:    cfg.Plain,
-		Handler: h2c.NewHandler(h, h2s),
+	if cfg.Plain != "" {
+		servers = append(servers, &http.Server{
+			Addr:    cfg.Plain,
+			Handler: h2c.NewHandler(h, &http2.Server{}),
+		})
 	}
-	servers = append(servers, plain)
 
 	if cfg.TLS != nil {
 		tlsSrv := &http.Server{

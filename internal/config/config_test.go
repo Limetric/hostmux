@@ -54,8 +54,26 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Listen != ":8080" {
+	if cfg.Listen != ":8443" {
 		t.Fatalf("listen default = %q", cfg.Listen)
+	}
+}
+
+func TestLoadTLSDefaultsListenWhenBlockPresent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hostmux.toml")
+	writeFile(t, path, `
+[tls]
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TLS == nil {
+		t.Fatal("expected tls block")
+	}
+	if cfg.TLS.Listen != ":8443" {
+		t.Fatalf("tls.listen default = %q", cfg.TLS.Listen)
 	}
 }
 

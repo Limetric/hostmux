@@ -22,6 +22,7 @@ import (
 	"github.com/Limetric/hostmux/internal/router"
 	"github.com/Limetric/hostmux/internal/sockpath"
 	"github.com/Limetric/hostmux/internal/sockserver"
+	"github.com/Limetric/hostmux/internal/tlsconfig"
 )
 
 func cmdServe(args []string) int {
@@ -57,22 +58,35 @@ func cmdServe(args []string) int {
 		}
 	}
 
-	// Resolve listen addresses.
-	plain := ":8080"
-	var tlsCfg *listener.TLSConfig
+	// Resolve listen address and TLS material.
+	var tlsBlock *config.TLSBlock
 	configSocket := ""
 	if cfg != nil {
-		if cfg.Listen != "" {
-			plain = cfg.Listen
-		}
 		if cfg.TLS != nil {
-			tlsCfg = &listener.TLSConfig{
-				Listen:   cfg.TLS.Listen,
-				CertFile: cfg.TLS.Cert,
-				KeyFile:  cfg.TLS.Key,
+			block := *cfg.TLS
+			if block.Listen == "" && cfg.Listen != "" {
+				block.Listen = cfg.Listen
 			}
+			tlsBlock = &block
+		} else if cfg.Listen != "" {
+			tlsBlock = &config.TLSBlock{Listen: cfg.Listen}
 		}
 		configSocket = cfg.Socket
+	}
+	effectiveTLS, err := tlsconfig.Resolve(tlsBlock)
+	if err != nil {
+		log.Printf("tls: %v", err)
+		return 1
+	}
+	generatedTLS := !pathExists(effectiveTLS.CertFile) && !pathExists(effectiveTLS.KeyFile)
+	if err := tlsconfig.EnsurePair(effectiveTLS); err != nil {
+		log.Printf("tls: %v", err)
+		return 1
+	}
+	tlsCfg := &listener.TLSConfig{
+		Listen:   effectiveTLS.Listen,
+		CertFile: effectiveTLS.CertFile,
+		KeyFile:  effectiveTLS.KeyFile,
 	}
 
 	// Resolve socket path.
@@ -132,7 +146,7 @@ func cmdServe(args []string) int {
 
 	// HTTP listeners.
 	handler := proxy.New(r)
-	servers, err := listener.Build(listener.Config{Plain: plain, TLS: tlsCfg}, handler)
+	servers, err := listener.Build(listener.Config{TLS: tlsCfg}, handler)
 	if err != nil {
 		log.Printf("listener: %v", err)
 		return 1
@@ -142,25 +156,19 @@ func cmdServe(args []string) int {
 	defer cancel()
 
 	// Start HTTP servers.
-	for i, srv := range servers {
+	for _, srv := range servers {
 		srv := srv
-		isTLS := i == 1 && tlsCfg != nil
 		go func() {
-			var serr error
-			if isTLS {
-				serr = srv.ListenAndServeTLS(tlsCfg.CertFile, tlsCfg.KeyFile)
-			} else {
-				serr = srv.ListenAndServe()
-			}
+			serr := srv.ListenAndServeTLS(tlsCfg.CertFile, tlsCfg.KeyFile)
 			if serr != nil && serr != http.ErrServerClosed {
 				log.Printf("http server: %v", serr)
 				cancel()
 			}
 		}()
 	}
-	log.Printf("hostmux serve: HTTP listening on %s", plain)
-	if tlsCfg != nil {
-		log.Printf("hostmux serve: TLS listening on %s", tlsCfg.Listen)
+	log.Printf("hostmux serve: TLS listening on %s", tlsCfg.Listen)
+	if generatedTLS {
+		log.Printf("hostmux serve: generated self-signed cert at %s and %s", tlsCfg.CertFile, tlsCfg.KeyFile)
 	}
 
 	// Unix socket server.
@@ -261,4 +269,9 @@ func acquirePIDLock(path string) (*os.File, bool, error) {
 		return nil, false, fmt.Errorf("write pid file: %w", err)
 	}
 	return f, false, nil
+}
+
+func pathExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

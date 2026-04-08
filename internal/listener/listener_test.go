@@ -101,3 +101,15 @@ func TestBuildWithTLSReturnsTwoServers(t *testing.T) {
 		t.Fatalf("expected 2 servers, got %d", len(servers))
 	}
 }
+
+func TestBuildWithOnlyTLSReturnsOneServer(t *testing.T) {
+	servers, err := Build(Config{
+		TLS: &TLSConfig{Listen: ":8443", CertFile: "/dev/null", KeyFile: "/dev/null"},
+	}, okHandler())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(servers) != 1 {
+		t.Fatalf("expected 1 server, got %d", len(servers))
+	}
+}

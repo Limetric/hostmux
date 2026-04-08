@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/net/http2"
 	"golang.org/x/sys/unix"
 
 	"github.com/Limetric/hostmux/internal/sockproto"
@@ -51,9 +50,10 @@ func TestEndToEnd(t *testing.T) {
 	t.Cleanup(func() { os.RemoveAll(sockDir) })
 	sockPath := filepath.Join(sockDir, "t.sock")
 
-	// 4. Write a tiny config that points the listener at proxyAddr.
+	// 4. Write a tiny config that points the TLS listener at proxyAddr.
 	cfgPath := filepath.Join(binDir, "hostmux.toml")
-	if err := os.WriteFile(cfgPath, []byte(fmt.Sprintf("listen = %q\n", proxyAddr)), 0o644); err != nil {
+	cfgBody := fmt.Sprintf("[tls]\nlisten = %q\n", proxyAddr)
+	if err := os.WriteFile(cfgPath, []byte(cfgBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -101,11 +101,18 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatalf("register: ok=%v err=%v %v", resp != nil && resp.Ok, err, resp)
 	}
 
-	// 9. HTTP/1.1 round trip.
+	// 9. HTTPS HTTP/1.1 round trip.
 	{
-		req, _ := http.NewRequest("GET", "http://"+proxyAddr+"/", nil)
+		client := &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+				TLSNextProto:    map[string]func(string, *tls.Conn) http.RoundTripper{},
+			},
+			Timeout: 5 * time.Second,
+		}
+		req, _ := http.NewRequest("GET", "https://"+proxyAddr+"/", nil)
 		req.Host = "e2e.test"
-		r, err := http.DefaultClient.Do(req)
+		r, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("http/1.1: %v", err)
 		}
@@ -119,41 +126,45 @@ func TestEndToEnd(t *testing.T) {
 		}
 	}
 
-	// 10. h2c round trip.
+	// 10. HTTPS HTTP/2 round trip.
 	{
 		client := &http.Client{
-			Transport: &http2.Transport{
-				AllowHTTP: true,
-				DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
-					var d net.Dialer
-					return d.DialContext(ctx, network, addr)
-				},
+			Transport: &http.Transport{
+				ForceAttemptHTTP2: true,
+				TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
 			},
 			Timeout: 5 * time.Second,
 		}
-		req, _ := http.NewRequest("GET", "http://"+proxyAddr+"/", nil)
+		req, _ := http.NewRequest("GET", "https://"+proxyAddr+"/", nil)
 		req.Host = "e2e.test"
 		r, err := client.Do(req)
 		if err != nil {
-			t.Fatalf("h2c: %v", err)
+			t.Fatalf("https http/2: %v", err)
 		}
 		body, _ := io.ReadAll(r.Body)
 		r.Body.Close()
 		if string(body) != "upstream-says-hi" {
-			t.Fatalf("h2c body = %q", body)
+			t.Fatalf("https http/2 body = %q", body)
 		}
 		if r.ProtoMajor != 2 {
-			t.Fatalf("h2c proto = %d", r.ProtoMajor)
+			t.Fatalf("https http/2 proto = %d", r.ProtoMajor)
 		}
 	}
 
 	// 11. Close the registrar — entry should disappear within ~2s.
 	conn.Close()
 	deadline := time.Now().Add(2 * time.Second)
+	notFoundClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			TLSNextProto:    map[string]func(string, *tls.Conn) http.RoundTripper{},
+		},
+		Timeout: 5 * time.Second,
+	}
 	for time.Now().Before(deadline) {
-		req, _ := http.NewRequest("GET", "http://"+proxyAddr+"/", nil)
+		req, _ := http.NewRequest("GET", "https://"+proxyAddr+"/", nil)
 		req.Host = "e2e.test"
-		r, err := http.DefaultClient.Do(req)
+		r, err := notFoundClient.Do(req)
 		if err == nil {
 			if r.StatusCode == http.StatusNotFound {
 				r.Body.Close()
