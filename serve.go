@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/Limetric/hostmux/internal/config"
 	"github.com/Limetric/hostmux/internal/listener"
@@ -156,7 +157,7 @@ func cmdServe(args []string) int {
 	}
 	log.Printf("hostmux serve: shutting down")
 
-	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	for _, srv := range servers {
 		_ = srv.Shutdown(shutdownCtx)

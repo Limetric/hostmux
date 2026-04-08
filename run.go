@@ -34,7 +34,7 @@ func cmdRun(args []string) int {
 	}
 	hostsArg := fs.Arg(0)
 	cmdArgv := fs.Args()[1:]
-	if cmdArgv[0] == "--" {
+	if len(cmdArgv) > 0 && cmdArgv[0] == "--" {
 		cmdArgv = cmdArgv[1:]
 	}
 	if len(cmdArgv) == 0 {
