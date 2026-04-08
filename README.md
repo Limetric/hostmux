@@ -10,7 +10,7 @@ It is designed to sit behind cloudflared (Argo Tunnel) or run standalone when yo
 # Build from source.
 go build -o build/hostmux .
 
-# Start the daemon on :8080.
+# Start the daemon with TLS enabled by default on :8443.
 ./build/hostmux serve
 
 # In another terminal, run a dev server and register a hostname for it.
@@ -37,17 +37,9 @@ More useful commands:
 
 ## Behind cloudflared
 
-`hostmux` can sit behind `cloudflared` on its plain listener:
+By default, `hostmux serve` listens on `:8443`, generates a self-signed certificate if needed, and stores it at `~/.hostmux/tls/hostmux.crt` and `~/.hostmux/tls/hostmux.key`.
 
-```yaml
-ingress:
-  - hostname: "*.example.com"
-    service: http://127.0.0.1:8080
-```
-
-That origin hop will be HTTP/1.1. Cloudflare's `http2Origin: true` setting requires an HTTPS origin, so h2c on the plain listener is not enough for tunnel-to-origin HTTP/2.
-
-If you want HTTP/2 multiplexing on the tunnel-to-origin hop, enable hostmux's TLS listener and point `cloudflared` at `https://...` instead:
+If you want HTTP/2 multiplexing on the tunnel-to-origin hop, point `cloudflared` at the default HTTPS listener:
 
 ```yaml
 ingress:
@@ -58,14 +50,18 @@ ingress:
       noTLSVerify: true
 ```
 
-The plain listener still speaks HTTP/1.1 + h2c on the same port for direct local clients that can use cleartext HTTP/2.
+`cloudflared` requires an HTTPS origin for `http2Origin: true`, so the old h2c-only standalone path is not enough for tunnel-to-origin HTTP/2.
 
 ## Persistent routes
 
 Create a TOML config (default: `~/.config/hostmux/hostmux.toml`):
 
 ```toml
-listen = ":8080"
+[tls]
+listen = ":8443"
+# Optional: override the managed self-signed certificate paths.
+# cert = "~/certs/hostmux.crt"
+# key = "~/certs/hostmux.key"
 
 [[app]]
 hosts = ["api.local"]
@@ -78,28 +74,9 @@ upstream = "http://127.0.0.1:9000"
 
 Run with `hostmux serve --config /path/to/hostmux.toml`. The file is hot-reloaded on save.
 
-## Example TLS Config
-
-If you want hostmux to terminate TLS directly, add a `[tls]` block alongside the plain HTTP listener:
-
-```toml
-listen = ":8080"
-
-[tls]
-listen = ":8443"
-cert = "/Users/alice/certs/dev-cert.pem"
-key = "/Users/alice/certs/dev-key.pem"
-
-[[app]]
-hosts = ["app.local"]
-upstream = "http://127.0.0.1:3000"
-
-[[app]]
-hosts = ["api.local"]
-upstream = "http://127.0.0.1:4000"
-```
-
-Run it with `hostmux serve --config /path/to/hostmux.toml`. `listen` serves plain HTTP/1.1 + h2c, while `tls.listen` serves HTTPS and negotiates HTTP/2 via ALPN.
+If you already have an older config using top-level `listen = "..."`
+without a `[tls]` block, that listen address still applies to the default TLS
+listener.
 
 ## Worktrees
 
