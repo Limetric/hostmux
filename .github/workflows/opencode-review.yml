@@ -59,5 +59,6 @@ jobs:
 
             IMPORTANT: Be concise and avoid unnecessary verbosity. Focus on actionable feedback. Be constructive and helpful.
 
-            Use `gh pr view`, `gh pr diff`, and other allowed `gh pr` commands as needed to inspect prior feedback before commenting.
-            Use `gh pr comment` with your Bash tool to leave your review as a comment on the PR.
+            Use `gh pr view`, `gh pr diff`, and other read-only `gh pr` commands as needed to inspect prior feedback.
+
+            Do not post to GitHub yourself (no `gh pr comment`, no review or issue APIs): this workflow publishes your final message as the PR comment. Put the full review in your last reply only
