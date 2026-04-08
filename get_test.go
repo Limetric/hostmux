@@ -25,6 +25,16 @@ func TestCmdGetPrintsExpandedURLWithDomainFlag(t *testing.T) {
 	}
 }
 
+func TestCmdGetNoArgsPrintsUsage(t *testing.T) {
+	stdout, stderr, code := runCmdGetAndCapture(t, nil)
+	if code != 2 {
+		t.Fatalf("cmdGet exit code = %d, stdout = %q, stderr = %q", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "usage: hostmux get HOST") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+}
+
 func TestCmdGetAppliesPrefixBeforeDomainExpansion(t *testing.T) {
 	stdout, stderr, code := runCmdGetAndCapture(t, []string{
 		"--domain", "example.com",
@@ -35,6 +45,20 @@ func TestCmdGetAppliesPrefixBeforeDomainExpansion(t *testing.T) {
 		t.Fatalf("cmdGet exit code = %d, stderr = %q", code, stderr)
 	}
 	if got, want := stdout, "https://feature-x-backend.example.com\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestCmdGetNoPrefixFlagLeavesHostUnprefixed(t *testing.T) {
+	stdout, stderr, code := runCmdGetAndCapture(t, []string{
+		"--domain", "example.com",
+		"--no-prefix",
+		"backend",
+	})
+	if code != 0 {
+		t.Fatalf("cmdGet exit code = %d, stderr = %q", code, stderr)
+	}
+	if got, want := stdout, "https://backend.example.com\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
