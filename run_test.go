@@ -201,7 +201,7 @@ func TestCmdRunFallsBackWhenDaemonDoesNotSupportInfo(t *testing.T) {
 	}, []string{
 		"api",
 		"--",
-		"/usr/bin/true",
+		"sh", "-c", `[ -z "${HOSTMUX_URL}" ]`,
 	})
 	if code != 0 {
 		t.Fatalf("cmdRun exit code = %d, stderr = %q", code, stderr)

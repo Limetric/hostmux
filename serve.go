@@ -227,6 +227,8 @@ func runForegroundDaemon(name, configPath, socketFlag string, force bool) int {
 		Domain: func() string {
 			return currentDomain.Load().(string)
 		},
+		// PlainHTTP is unreachable while serve always configures lc.TLS; kept for
+		// a future plain-only public listener (lc.TLS == nil).
 		PlainHTTP: lc.TLS == nil,
 	})
 	if err := sockSrv.Listen(sockPath); err != nil {

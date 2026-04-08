@@ -106,11 +106,17 @@ func cmdRun(args []string) int {
 			fmt.Fprintf(os.Stderr, "hostmux run: %v; using bare hosts unchanged\n", err)
 		}
 	}
-	scheme := "http"
-	if publicHTTPS {
-		scheme = "https"
+	// HOSTMUX_URL uses the first registered hostname only. Omit the variable
+	// entirely unless OpInfo succeeded—otherwise bare-host fallback could
+	// produce useless values like "https://api" with no domain.
+	var publicURL string
+	if err == nil {
+		scheme := "http"
+		if publicHTTPS {
+			scheme = "https"
+		}
+		publicURL = scheme + "://" + hosts[0]
 	}
-	publicURL := scheme + "://" + hosts[0]
 	upstream := fmt.Sprintf("http://127.0.0.1:%d", port)
 	if err := enc.Encode(&sockproto.Message{Op: sockproto.OpRegister, Hosts: hosts, Upstream: upstream}); err != nil {
 		fmt.Fprintf(os.Stderr, "hostmux run: register: %v\n", err)
