@@ -16,6 +16,12 @@ hostmux run a.test,b.test -- bun run dev
 
 # What's currently registered?
 hostmux list
+
+# Stop the running daemon.
+hostmux stop
+
+# Replace a running daemon (e.g. after rebuilding the binary or editing config).
+hostmux serve --force
 ```
 
 `hostmux run` allocates a free TCP port, sets `PORT=<port>` in the child's environment, registers the hostname(s) with the daemon, streams the child's stdio, and automatically deregisters when the child exits — even on crash or `kill -9`.
