@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -91,6 +92,62 @@ func TestCmdGetUsesDaemonDomainForBareHost(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for server completion")
+	}
+}
+
+func TestCmdGetPassesThroughBareHostWhenNoDomainAvailable(t *testing.T) {
+	stdout, stderr, code := runCmdGetAndCapture(t, []string{
+		"--socket", filepath.Join(t.TempDir(), "missing.sock"),
+		"backend",
+	})
+	if code != 0 {
+		t.Fatalf("cmdGet exit code = %d, stderr = %q", code, stderr)
+	}
+	if got, want := stdout, "https://backend\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if !strings.Contains(stderr, "using bare host unchanged") {
+		t.Fatalf("stderr = %q, want warning about bare host fallback", stderr)
+	}
+}
+
+func TestCmdGetPreservesFullHostnameWithDomainFlag(t *testing.T) {
+	stdout, stderr, code := runCmdGetAndCapture(t, []string{
+		"--domain", "example.com",
+		"admin.other.test",
+	})
+	if code != 0 {
+		t.Fatalf("cmdGet exit code = %d, stderr = %q", code, stderr)
+	}
+	if got, want := stdout, "https://admin.other.test\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestCmdGetDomainFlagTakesPriorityOverDaemonLookup(t *testing.T) {
+	stdout, stderr, code := runCmdGetAndCapture(t, []string{
+		"--socket", filepath.Join(t.TempDir(), "missing.sock"),
+		"--domain", "example.com",
+		"backend",
+	})
+	if code != 0 {
+		t.Fatalf("cmdGet exit code = %d, stderr = %q", code, stderr)
+	}
+	if got, want := stdout, "https://backend.example.com\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if stderr != "" {
+		t.Fatalf("stderr = %q, want empty stderr", stderr)
+	}
+}
+
+func TestCmdGetRejectsMultipleHosts(t *testing.T) {
+	stdout, stderr, code := runCmdGetAndCapture(t, []string{"backend,admin"})
+	if code != 2 {
+		t.Fatalf("cmdGet exit code = %d, stdout = %q, stderr = %q", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "HOST must be a single hostname") {
+		t.Fatalf("stderr = %q", stderr)
 	}
 }
 
