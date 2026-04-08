@@ -66,9 +66,3 @@ jobs:
 
           additional_permissions: |
             actions: read
-
-      - name: Remove trigger:review label
-        if: github.event.action == 'labeled'
-        run: gh pr edit ${{ github.event.pull_request.number }} --remove-label 'trigger:review' || true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
