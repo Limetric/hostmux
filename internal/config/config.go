@@ -49,9 +49,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("config: parse %s: %w", path, err)
 	}
 	cfg.applyDefaults()
-	if err := cfg.normalize(); err != nil {
-		return nil, err
-	}
+	cfg.normalize()
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
@@ -67,12 +65,11 @@ func (c *Config) applyDefaults() {
 	}
 }
 
-func (c *Config) normalize() error {
+func (c *Config) normalize() {
 	c.Domain = hostnames.NormalizeDomain(c.Domain)
 	for i := range c.Apps {
 		c.Apps[i].Hosts = hostnames.Expand(c.Apps[i].Hosts, c.Domain)
 	}
-	return nil
 }
 
 func (c *Config) validate() error {

@@ -192,6 +192,9 @@ func TestCmdRunFallsBackWhenDaemonDoesNotSupportInfo(t *testing.T) {
 	if !reflect.DeepEqual(hosts, want) {
 		t.Fatalf("registered hosts = %v, want %v", hosts, want)
 	}
+	if got := stderr; got == "" || !bytes.Contains([]byte(got), []byte("using bare hosts unchanged")) {
+		t.Fatalf("stderr = %q", stderr)
+	}
 }
 
 type runServerScript struct {

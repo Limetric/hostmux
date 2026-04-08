@@ -37,6 +37,7 @@ More useful commands:
 ```
 
 `hostmux run` allocates a free TCP port, sets `PORT=<port>` in the child's environment, expands bare subdomains using `--domain` (or the daemon's configured `domain`), registers the resulting hostnames with the daemon, streams the child's stdio, and automatically deregisters when the child exits — even on crash or `kill -9`.
+Without either source of domain information, bare names pass through unchanged.
 
 ## Behind cloudflared
 
@@ -61,12 +62,13 @@ ingress:
 Create a TOML config (default: `~/.config/hostmux/hostmux.toml`):
 
 ```toml
+domain = "example.com"
+
 [tls]
 listen = ":8443"
 # Optional: override the managed self-signed certificate paths.
 # cert = "~/certs/hostmux.crt"
 # key = "~/certs/hostmux.key"
-domain = "example.com"
 
 [[app]]
 hosts = ["api"]

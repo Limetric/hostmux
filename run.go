@@ -113,6 +113,12 @@ func cmdRun(args []string) int {
 		}
 		if resp.Ok {
 			domain = hostnames.NormalizeDomain(resp.Domain)
+		} else {
+			fmt.Fprintf(os.Stderr, "hostmux run: daemon rejected info lookup; using bare hosts unchanged")
+			if resp.Error != "" {
+				fmt.Fprintf(os.Stderr, " (%s)", resp.Error)
+			}
+			fmt.Fprintln(os.Stderr)
 		}
 	}
 	hosts = hostnames.Expand(hosts, domain)
