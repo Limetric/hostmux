@@ -80,6 +80,9 @@ func forkHostmuxServe() error {
 		logFile.Close()
 		return err
 	}
+	// The child inherited its own copy of the log file's fd via fork; the
+	// parent's copy is no longer needed and would leak if left open.
+	logFile.Close()
 	// Detach: don't Wait, let the daemon outlive us.
 	go func() { _ = cmd.Process.Release() }()
 	return nil
