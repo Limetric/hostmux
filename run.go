@@ -50,18 +50,15 @@ func cmdRun(args []string) int {
 		return 2
 	}
 
-	// Apply prefix.
-	prefix, err := resolvePrefix(*prefixFlag, *noPrefix)
+	hosts, err := resolveRequestedHosts(hosts, hostResolveOptions{
+		Domain:   *domainFlag,
+		Prefix:   *prefixFlag,
+		NoPrefix: *noPrefix,
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hostmux run: %v\n", err)
 		return 1
 	}
-	if prefix != "" {
-		for i, h := range hosts {
-			hosts[i] = prefix + "-" + h
-		}
-	}
-	domain := hostnames.NormalizeDomain(*domainFlag)
 
 	// Resolve socket path and ensure daemon is running.
 	sockOpts := sockpath.Options{Flag: *socketFlag}
@@ -101,27 +98,14 @@ func cmdRun(args []string) int {
 	defer conn.Close()
 	enc := sockproto.NewEncoder(conn)
 	dec := sockproto.NewDecoder(conn)
-	if hostnames.HasBare(hosts) && domain == "" {
-		if err := enc.Encode(&sockproto.Message{Op: sockproto.OpInfo}); err != nil {
-			fmt.Fprintf(os.Stderr, "hostmux run: info: %v\n", err)
-			return 1
-		}
-		resp, err := dec.Decode()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "hostmux run: info response: %v\n", err)
-			return 1
-		}
-		if resp.Ok {
-			domain = hostnames.NormalizeDomain(resp.Domain)
+	if hostnames.HasBare(hosts) {
+		domain, err := lookupDaemonDomainClient(enc, dec)
+		if err == nil {
+			hosts = hostnames.Expand(hosts, domain)
 		} else {
-			fmt.Fprintf(os.Stderr, "hostmux run: daemon rejected info lookup; using bare hosts unchanged")
-			if resp.Error != "" {
-				fmt.Fprintf(os.Stderr, " (%s)", resp.Error)
-			}
-			fmt.Fprintln(os.Stderr)
+			fmt.Fprintf(os.Stderr, "hostmux run: %v; using bare hosts unchanged\n", err)
 		}
 	}
-	hosts = hostnames.Expand(hosts, domain)
 	upstream := fmt.Sprintf("http://127.0.0.1:%d", port)
 	if err := enc.Encode(&sockproto.Message{Op: sockproto.OpRegister, Hosts: hosts, Upstream: upstream}); err != nil {
 		fmt.Fprintf(os.Stderr, "hostmux run: register: %v\n", err)

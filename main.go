@@ -18,6 +18,8 @@ func main() {
 		code = cmdServe(args)
 	case "run":
 		code = cmdRun(args)
+	case "get":
+		code = cmdGet(args)
 	case "list":
 		code = cmdList(args)
 	case "stop":
@@ -41,6 +43,7 @@ func usage() {
 usage:
   hostmux serve [--config PATH] [--socket PATH] [--force]
   hostmux run HOSTS [--socket PATH] [--domain DOMAIN] [--prefix NAME | --no-prefix] -- COMMAND [ARGS...]
+  hostmux get HOST [--socket PATH] [--domain DOMAIN] [--prefix NAME | --no-prefix]
   hostmux list [--socket PATH]
   hostmux stop [--socket PATH]
   hostmux version
