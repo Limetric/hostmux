@@ -33,6 +33,9 @@ type Message struct {
 	Error   string  `json:"error,omitempty"`
 	Domain  string  `json:"domain,omitempty"`
 	Entries []Entry `json:"entries,omitempty"`
+	// PublicHTTPS is true when the daemon serves HTTPS on its public
+	// listener. Omitted by older daemons; clients should treat nil as true.
+	PublicHTTPS *bool `json:"public_https,omitempty"`
 }
 
 // Entry is the on-wire shape of a routing table entry, used in list responses.

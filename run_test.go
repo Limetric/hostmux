@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -36,13 +37,30 @@ func TestCmdRunUsesDashBetweenPrefixAndHost(t *testing.T) {
 		}
 		defer conn.Close()
 
-		msg, err := sockproto.NewDecoder(conn).Decode()
-		if err != nil {
-			errCh <- err
-			return
+		dec := sockproto.NewDecoder(conn)
+		enc := sockproto.NewEncoder(conn)
+		for i := 0; i < 2; i++ {
+			msg, err := dec.Decode()
+			if err != nil {
+				errCh <- err
+				return
+			}
+			switch msg.Op {
+			case sockproto.OpInfo:
+				https := true
+				if err := enc.Encode(&sockproto.Message{Ok: true, PublicHTTPS: &https}); err != nil {
+					errCh <- err
+					return
+				}
+			case sockproto.OpRegister:
+				hostsCh <- msg.Hosts
+				errCh <- enc.Encode(&sockproto.Message{Ok: true})
+				return
+			default:
+				errCh <- fmt.Errorf("unexpected op %q", msg.Op)
+				return
+			}
 		}
-		hostsCh <- msg.Hosts
-		errCh <- sockproto.NewEncoder(conn).Encode(&sockproto.Message{Ok: true})
 	}()
 
 	oldWD, err := os.Getwd()
@@ -183,7 +201,7 @@ func TestCmdRunFallsBackWhenDaemonDoesNotSupportInfo(t *testing.T) {
 	}, []string{
 		"api",
 		"--",
-		"/usr/bin/true",
+		"sh", "-c", `[ -z "${HOSTMUX_URL}" ]`,
 	})
 	if code != 0 {
 		t.Fatalf("cmdRun exit code = %d, stderr = %q", code, stderr)
@@ -197,10 +215,39 @@ func TestCmdRunFallsBackWhenDaemonDoesNotSupportInfo(t *testing.T) {
 	}
 }
 
+func TestCmdRunHostmuxURLSchemeMatchesDaemonEdge(t *testing.T) {
+	tests := []struct {
+		name      string
+		plainEdge bool
+		wantURL   string
+	}{
+		{"tls", false, "https://api.example.com"},
+		{"plain", true, "http://api.example.com"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, code, stderr := runCmdRunAndCapture(t, runServerScript{
+				domain:    "example.com",
+				plainEdge: tt.plainEdge,
+			}, []string{
+				"api",
+				"--",
+				"sh", "-c", `test "$HOSTMUX_URL" = "` + tt.wantURL + `"`,
+			})
+			if code != 0 {
+				t.Fatalf("cmdRun exit code = %d, stderr = %q", code, stderr)
+			}
+		})
+	}
+}
+
 type runServerScript struct {
 	domain    string
 	infoOk    bool
 	infoError string
+	// plainEdge is true when the fake daemon uses plain HTTP on its public
+	// listener (OpInfo reports public_https: false).
+	plainEdge bool
 }
 
 func runCmdRunAndCapture(t *testing.T, script runServerScript, args []string) ([]string, int, string) {
@@ -256,7 +303,12 @@ func runCmdRunAndCapture(t *testing.T, script runServerScript, args []string) ([
 				if script.infoError != "" {
 					ok = script.infoOk
 				}
-				if err := enc.Encode(&sockproto.Message{Ok: ok, Domain: script.domain, Error: script.infoError}); err != nil {
+				msg := &sockproto.Message{Ok: ok, Domain: script.domain, Error: script.infoError}
+				if ok {
+					https := !script.plainEdge
+					msg.PublicHTTPS = &https
+				}
+				if err := enc.Encode(msg); err != nil {
 					errCh <- err
 				}
 			case sockproto.OpRegister:

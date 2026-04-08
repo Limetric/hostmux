@@ -1,7 +1,8 @@
 // Package childproc spawns developer dev-server child processes on behalf of
-// `hostmux run`. It allocates a free TCP port, injects PORT= into the child
-// environment, forwards SIGINT/SIGTERM to the child's process group, and
-// returns the child's exit code.
+// `hostmux run`. It allocates a free TCP port, injects PORT=, HOST=, and
+// optionally HOSTMUX_URL= into the child environment, forwards
+// SIGINT/SIGTERM to the child's process group, and returns the child's exit
+// code.
 package childproc
 
 import (
@@ -20,10 +21,16 @@ import (
 type RunOpts struct {
 	// Port is set as the PORT env var passed to the child.
 	Port int
+	// Host is set as the HOST env var (listening address). Empty means
+	// "127.0.0.1".
+	Host string
+	// HostmuxURL is set as HOSTMUX_URL when non-empty (public base URL of the
+	// app, including scheme).
+	HostmuxURL string
 	// Argv is the command and arguments to execute (Argv[0] is looked up on PATH).
 	Argv []string
 	// ExtraEnv lists extra environment variables to pass to the child, on
-	// top of the parent's environment and the injected PORT.
+	// top of the parent's environment and the injected variables above.
 	ExtraEnv []string
 }
 
@@ -63,8 +70,18 @@ func Run(ctx context.Context, opts RunOpts) (int, error) {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = append(os.Environ(), "PORT="+strconv.Itoa(opts.Port))
-	cmd.Env = append(cmd.Env, opts.ExtraEnv...)
+	host := opts.Host
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	env := append(os.Environ(),
+		"PORT="+strconv.Itoa(opts.Port),
+		"HOST="+host,
+	)
+	if opts.HostmuxURL != "" {
+		env = append(env, "HOSTMUX_URL="+opts.HostmuxURL)
+	}
+	cmd.Env = append(env, opts.ExtraEnv...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	if err := cmd.Start(); err != nil {

@@ -98,26 +98,37 @@ func cmdRun(args []string) int {
 	defer conn.Close()
 	enc := sockproto.NewEncoder(conn)
 	dec := sockproto.NewDecoder(conn)
+	daemonDomain, publicHTTPS, err := lookupDaemonInfoClient(enc, dec)
 	if hostnames.HasBare(hosts) {
-		domain, err := lookupDaemonDomainClient(enc, dec)
 		if err == nil {
-			hosts = hostnames.Expand(hosts, domain)
+			hosts = hostnames.Expand(hosts, daemonDomain)
 		} else {
 			fmt.Fprintf(os.Stderr, "hostmux run: %v; using bare hosts unchanged\n", err)
 		}
+	}
+	// HOSTMUX_URL uses the first registered hostname only. Omit the variable
+	// entirely unless OpInfo succeeded—otherwise bare-host fallback could
+	// produce useless values like "https://api" with no domain.
+	var publicURL string
+	if err == nil {
+		scheme := "http"
+		if publicHTTPS {
+			scheme = "https"
+		}
+		publicURL = scheme + "://" + hosts[0]
 	}
 	upstream := fmt.Sprintf("http://127.0.0.1:%d", port)
 	if err := enc.Encode(&sockproto.Message{Op: sockproto.OpRegister, Hosts: hosts, Upstream: upstream}); err != nil {
 		fmt.Fprintf(os.Stderr, "hostmux run: register: %v\n", err)
 		return 1
 	}
-	resp, err := dec.Decode()
+	regResp, err := dec.Decode()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hostmux run: register response: %v\n", err)
 		return 1
 	}
-	if !resp.Ok {
-		fmt.Fprintf(os.Stderr, "hostmux run: register rejected: %s\n", resp.Error)
+	if !regResp.Ok {
+		fmt.Fprintf(os.Stderr, "hostmux run: register rejected: %s\n", regResp.Error)
 		return 1
 	}
 
@@ -128,8 +139,10 @@ func cmdRun(args []string) int {
 
 	// Run the child to completion.
 	code, err := childproc.Run(context.Background(), childproc.RunOpts{
-		Port: port,
-		Argv: cmdArgv,
+		Port:       port,
+		Host:       "127.0.0.1",
+		HostmuxURL: publicURL,
+		Argv:       cmdArgv,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hostmux run: child: %v\n", err)

@@ -40,19 +40,28 @@ func lookupDaemonDomain(sockPath string) (string, error) {
 	return lookupDaemonDomainClient(sockproto.NewEncoder(conn), sockproto.NewDecoder(conn))
 }
 
-func lookupDaemonDomainClient(enc *sockproto.Encoder, dec *sockproto.Decoder) (string, error) {
+func lookupDaemonInfoClient(enc *sockproto.Encoder, dec *sockproto.Decoder) (daemonDomain string, publicHTTPS bool, err error) {
 	if err := enc.Encode(&sockproto.Message{Op: sockproto.OpInfo}); err != nil {
-		return "", fmt.Errorf("info: %w", err)
+		return "", true, fmt.Errorf("info: %w", err)
 	}
 	resp, err := dec.Decode()
 	if err != nil {
-		return "", fmt.Errorf("info response: %w", err)
+		return "", true, fmt.Errorf("info response: %w", err)
+	}
+	publicHTTPS = true
+	if resp.PublicHTTPS != nil {
+		publicHTTPS = *resp.PublicHTTPS
 	}
 	if !resp.Ok {
 		if resp.Error != "" {
-			return "", fmt.Errorf("daemon rejected info lookup: %s", resp.Error)
+			return "", publicHTTPS, fmt.Errorf("daemon rejected info lookup: %s", resp.Error)
 		}
-		return "", fmt.Errorf("daemon rejected info lookup")
+		return "", publicHTTPS, fmt.Errorf("daemon rejected info lookup")
 	}
-	return hostnames.NormalizeDomain(resp.Domain), nil
+	return hostnames.NormalizeDomain(resp.Domain), publicHTTPS, nil
+}
+
+func lookupDaemonDomainClient(enc *sockproto.Encoder, dec *sockproto.Decoder) (string, error) {
+	domain, _, err := lookupDaemonInfoClient(enc, dec)
+	return domain, err
 }
