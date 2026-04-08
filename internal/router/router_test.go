@@ -1,6 +1,7 @@
 package router
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 )
@@ -160,6 +161,34 @@ func TestConcurrentAddLookup(t *testing.T) {
 			_ = r.Add("source", []string{host}, "http://127.0.0.1:1")
 			_, _ = r.Lookup(host)
 		}(i)
+	}
+	wg.Wait()
+}
+
+func TestConcurrentMixedOperations(t *testing.T) {
+	r := New()
+	const workers = 20
+	const iterations = 200
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for w := 0; w < workers; w++ {
+		go func(id int) {
+			defer wg.Done()
+			source := fmt.Sprintf("worker-%d", id)
+			host := fmt.Sprintf("h%d.test", id)
+			for i := 0; i < iterations; i++ {
+				switch i % 4 {
+				case 0:
+					_ = r.Add(source, []string{host}, "http://127.0.0.1:1")
+				case 1:
+					_, _ = r.Lookup(host)
+				case 2:
+					_ = r.ReplaceSource(source, []Entry{{Source: source, Hosts: []string{host}, Upstream: "http://127.0.0.1:2"}})
+				case 3:
+					r.RemoveBySource(source)
+				}
+			}
+		}(w)
 	}
 	wg.Wait()
 }

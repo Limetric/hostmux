@@ -2,6 +2,7 @@ package router
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 )
@@ -186,7 +187,7 @@ func (r *Router) removeEntryLocked(e *entry) {
 	src := r.bySource[e.source]
 	for i, x := range src {
 		if x == e {
-			r.bySource[e.source] = append(src[:i], src[i+1:]...)
+			r.bySource[e.source] = slices.Delete(src, i, i+1)
 			break
 		}
 	}
