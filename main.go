@@ -20,6 +20,8 @@ func main() {
 		code = cmdRun(args)
 	case "list":
 		code = cmdList(args)
+	case "stop":
+		code = cmdStop(args)
 	case "version", "-v", "--version":
 		code = cmdVersion(args)
 	case "help", "-h", "--help":
@@ -37,9 +39,10 @@ func usage() {
 	fmt.Fprint(os.Stderr, `hostmux — host-routed reverse proxy
 
 usage:
-  hostmux serve [--config PATH] [--socket PATH]
+  hostmux serve [--config PATH] [--socket PATH] [--force]
   hostmux run HOSTS [--socket PATH] [--prefix NAME | --no-prefix] -- COMMAND [ARGS...]
   hostmux list [--socket PATH]
+  hostmux stop [--socket PATH]
   hostmux version
 `)
 }
