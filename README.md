@@ -1,6 +1,6 @@
 # hostmux
 
-`hostmux` is a small Go reverse proxy for hostname-based routing. It gives you one local entrypoint for many apps: you can keep long-lived routes in a TOML config, or use `hostmux run` to start a dev process, allocate a free port, register one or more hostnames, and clean everything up automatically when the process exits.
+`hostmux` is a small Go reverse proxy for host-based routing. It gives you one local entrypoint for many apps: you can keep long-lived routes in a TOML config, or use `hostmux run` to start a dev process, allocate a free port, register one or more subdomains or hostnames, and clean everything up automatically when the process exits.
 
 It is designed to sit behind cloudflared (Argo Tunnel) or run standalone when you want a simple host router without maintaining per-app reverse proxy config.
 
@@ -13,8 +13,8 @@ go build -o build/hostmux .
 # Start the daemon with TLS enabled by default on :8443.
 ./build/hostmux serve
 
-# In another terminal, run a dev server and register a hostname for it.
-./build/hostmux run myapp.test -- bun run dev
+# In another terminal, run a dev server and register a subdomain for it.
+./build/hostmux run --domain example.com myapp -- bun run dev
 
 # Inspect the active routes.
 ./build/hostmux list
@@ -26,14 +26,17 @@ go build -o build/hostmux .
 More useful commands:
 
 ```sh
-# Multiple hostnames for the same upstream.
-./build/hostmux run a.test,b.test -- bun run dev
+# Multiple subdomains for the same upstream.
+./build/hostmux run --domain example.com app,admin -- bun run dev
+
+# Full hostnames still work unchanged.
+./build/hostmux run admin.other.test -- bun run dev
 
 # Replace a running daemon (e.g. after rebuilding the binary or editing config).
 ./build/hostmux serve --force
 ```
 
-`hostmux run` allocates a free TCP port, sets `PORT=<port>` in the child's environment, registers the hostname(s) with the daemon, streams the child's stdio, and automatically deregisters when the child exits — even on crash or `kill -9`.
+`hostmux run` allocates a free TCP port, sets `PORT=<port>` in the child's environment, expands bare subdomains using `--domain` (or the daemon's configured `domain`), registers the resulting hostnames with the daemon, streams the child's stdio, and automatically deregisters when the child exits — even on crash or `kill -9`.
 
 ## Behind cloudflared
 
@@ -63,15 +66,18 @@ listen = ":8443"
 # Optional: override the managed self-signed certificate paths.
 # cert = "~/certs/hostmux.crt"
 # key = "~/certs/hostmux.key"
+domain = "example.com"
 
 [[app]]
-hosts = ["api.local"]
+hosts = ["api"]
 upstream = "http://127.0.0.1:8080"
 
 [[app]]
-hosts = ["admin.local", "admin.example.com"]
+hosts = ["admin", "admin.other.test"]
 upstream = "http://127.0.0.1:9000"
 ```
+
+Bare `hosts` entries expand against the top-level `domain`; entries that already contain a dot are treated as full hostnames and kept unchanged.
 
 Run with `hostmux serve --config /path/to/hostmux.toml`. The file is hot-reloaded on save.
 
@@ -81,12 +87,12 @@ listener.
 
 ## Worktrees
 
-`hostmux run` auto-detects non-primary git worktrees and prepends the worktree name to the hostname so two checkouts of the same project don't collide:
+`hostmux run` auto-detects non-primary git worktrees and prepends the worktree name to the requested subdomain or hostname so two checkouts of the same project don't collide:
 
 | cwd | command | actual hostnames |
 |---|---|---|
-| `~/proj/main` (primary) | `hostmux run myapp.test -- ...` | `myapp.test` |
-| `~/proj/feature-x` (worktree) | `hostmux run myapp.test -- ...` | `feature-x-myapp.test` |
+| `~/proj/main` (primary) | `hostmux run --domain example.com myapp -- ...` | `myapp.example.com` |
+| `~/proj/feature-x` (worktree) | `hostmux run --domain example.com myapp -- ...` | `feature-x-myapp.example.com` |
 
 Override with `--prefix NAME` or disable with `--no-prefix`.
 

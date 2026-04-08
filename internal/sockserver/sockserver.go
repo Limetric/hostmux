@@ -27,6 +27,9 @@ type Options struct {
 	// its main-loop context cancel, triggering the same teardown path as
 	// a SIGTERM.
 	OnShutdown func()
+
+	// Domain returns the daemon's configured base domain, if any.
+	Domain func() string
 }
 
 // Server is the daemon-side Unix socket server. Each connection owns the
@@ -34,6 +37,7 @@ type Options struct {
 type Server struct {
 	router     *router.Router
 	onShutdown func()
+	domain     func() string
 
 	mu     sync.Mutex
 	ln     net.Listener
@@ -43,7 +47,7 @@ type Server struct {
 
 // New returns a Server bound to the given router and options.
 func New(r *router.Router, opts Options) *Server {
-	return &Server{router: r, onShutdown: opts.OnShutdown}
+	return &Server{router: r, onShutdown: opts.OnShutdown, domain: opts.Domain}
 }
 
 // Listen creates the Unix socket at path. Removes any stale socket file first.
@@ -129,6 +133,12 @@ func (s *Server) serveConn(c net.Conn) {
 				out = append(out, sockproto.Entry{Source: e.Source, Hosts: e.Hosts, Upstream: e.Upstream})
 			}
 			_ = enc.Encode(&sockproto.Message{Ok: true, Entries: out})
+		case sockproto.OpInfo:
+			domain := ""
+			if s.domain != nil {
+				domain = s.domain()
+			}
+			_ = enc.Encode(&sockproto.Message{Ok: true, Domain: domain})
 		case sockproto.OpBye:
 			_ = enc.Encode(&sockproto.Message{Ok: true})
 			return

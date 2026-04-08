@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -61,6 +62,8 @@ func cmdServe(args []string) int {
 	// Resolve listen address and TLS material.
 	var tlsBlock *config.TLSBlock
 	configSocket := ""
+	var currentDomain atomic.Value
+	currentDomain.Store("")
 	if cfg != nil {
 		if cfg.TLS != nil {
 			block := *cfg.TLS
@@ -72,6 +75,7 @@ func cmdServe(args []string) int {
 			tlsBlock = &config.TLSBlock{Listen: cfg.Listen}
 		}
 		configSocket = cfg.Socket
+		currentDomain.Store(cfg.Domain)
 	}
 	effectiveTLS, err := tlsconfig.Resolve(tlsBlock)
 	if err != nil {
@@ -172,7 +176,12 @@ func cmdServe(args []string) int {
 	}
 
 	// Unix socket server.
-	sockSrv := sockserver.New(r, sockserver.Options{OnShutdown: cancel})
+	sockSrv := sockserver.New(r, sockserver.Options{
+		OnShutdown: cancel,
+		Domain: func() string {
+			return currentDomain.Load().(string)
+		},
+	})
 	if err := sockSrv.Listen(sockPath); err != nil {
 		log.Printf("sockserver: %v", err)
 		return 1
@@ -193,6 +202,7 @@ func cmdServe(args []string) int {
 					log.Printf("config: reload rejected: %v", err)
 					return
 				}
+				currentDomain.Store(c.Domain)
 				log.Printf("config: reloaded (%d apps)", len(c.Apps))
 			},
 			func(err error) { log.Printf("config: %v", err) },

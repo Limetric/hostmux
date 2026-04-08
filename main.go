@@ -40,7 +40,7 @@ func usage() {
 
 usage:
   hostmux serve [--config PATH] [--socket PATH] [--force]
-  hostmux run HOSTS [--socket PATH] [--prefix NAME | --no-prefix] -- COMMAND [ARGS...]
+  hostmux run HOSTS [--socket PATH] [--domain DOMAIN] [--prefix NAME | --no-prefix] -- COMMAND [ARGS...]
   hostmux list [--socket PATH]
   hostmux stop [--socket PATH]
   hostmux version

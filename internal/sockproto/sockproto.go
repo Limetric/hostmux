@@ -15,6 +15,7 @@ type Op string
 const (
 	OpRegister Op = "register"
 	OpList     Op = "list"
+	OpInfo     Op = "info"
 	OpBye      Op = "bye"
 	OpShutdown Op = "shutdown"
 )
@@ -30,6 +31,7 @@ type Message struct {
 	// Response fields.
 	Ok      bool    `json:"ok,omitempty"`
 	Error   string  `json:"error,omitempty"`
+	Domain  string  `json:"domain,omitempty"`
 	Entries []Entry `json:"entries,omitempty"`
 }
 
