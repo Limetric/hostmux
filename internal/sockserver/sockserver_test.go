@@ -1,7 +1,6 @@
 package sockserver
 
 import (
-	"context"
 	"net"
 	"os"
 	"path/filepath"
@@ -154,6 +153,3 @@ func TestServerCancellableViaContext(t *testing.T) {
 	}
 	t.Fatal("server did not exit after Close")
 }
-
-// silence unused-import warning when test is rearranged.
-var _ = context.Background
