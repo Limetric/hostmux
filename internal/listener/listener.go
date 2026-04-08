@@ -1,7 +1,7 @@
 // Package listener builds the HTTP servers the hostmux daemon listens on.
-// Always returns a plain HTTP/1.1 + h2c listener (so cloudflared can speak
-// HTTP/2 cleartext to the origin). Optionally also returns a TLS listener
-// that negotiates HTTP/2 via ALPN.
+// Always returns a plain HTTP/1.1 + h2c listener for direct clients.
+// Optionally also returns a TLS listener that negotiates HTTP/2 via ALPN for
+// origins such as cloudflared that require HTTPS for HTTP/2-to-origin.
 package listener
 
 import (
