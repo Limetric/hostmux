@@ -25,6 +25,26 @@ func TestURLCommandPrintsExpandedURLWithDomainFlag(t *testing.T) {
 	}
 }
 
+func TestURLCommandAcceptsPositionalName(t *testing.T) {
+	cmd := newURLCmd()
+	cmd.SetArgs([]string{"--domain", "example.com", "--no-prefix", "my-app"})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if got, want := stdout.String(), "https://my-app.example.com\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty stderr", stderr.String())
+	}
+}
+
 func TestURLCommandUsesCobraOutputWriter(t *testing.T) {
 	cmd := newURLCmd()
 	cmd.SetArgs([]string{"--domain", "example.com", "--no-prefix", "--name", "backend"})
@@ -130,7 +150,7 @@ func TestURLHelpShowsRepeatedNameUsage(t *testing.T) {
 
 	help := stdout.String()
 	for _, want := range []string{
-		"url [--name NAME]...",
+		"url [NAME]... [--name NAME]...",
 		"Print the public URL for a host",
 		"repeatable hostname to print",
 	} {
