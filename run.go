@@ -27,7 +27,7 @@ type runOptions struct {
 
 func runCommand(opts runOptions) error {
 	if len(opts.Argv) == 0 {
-		return usageErrorf("usage: hostmux run [--name NAME]... [--socket PATH] [--domain DOMAIN] [--prefix NAME | --no-prefix] -- COMMAND [ARGS...]")
+		return usageErrorf("usage: hostmux run [--name NAME]... [--socket PATH] [--domain DOMAIN] [--prefix NAME | --no-prefix] [--] COMMAND [ARGS...]")
 	}
 
 	if err := validateExplicitNames(opts.Names); err != nil {

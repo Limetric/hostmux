@@ -95,6 +95,51 @@ func TestRunCommandDelegatesToRunner(t *testing.T) {
 	}
 }
 
+func TestRunCommandWithoutDoubleDashPassesArgsAsChild(t *testing.T) {
+	oldRunner := runRunner
+	t.Cleanup(func() { runRunner = oldRunner })
+
+	var got runOptions
+	runRunner = func(opts runOptions) error {
+		got = opts
+		return nil
+	}
+
+	cmd := newRunCmd()
+	cmd.SetArgs([]string{"vite", "dev"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	wantArgv := []string{"vite", "dev"}
+	if !reflect.DeepEqual(got.Argv, wantArgv) {
+		t.Fatalf("Argv = %v, want %v", got.Argv, wantArgv)
+	}
+}
+
+func TestRunCommandChildAfterFlagsWithoutDoubleDash(t *testing.T) {
+	oldRunner := runRunner
+	t.Cleanup(func() { runRunner = oldRunner })
+
+	var got runOptions
+	runRunner = func(opts runOptions) error {
+		got = opts
+		return nil
+	}
+
+	cmd := newRunCmd()
+	cmd.SetArgs([]string{"--name", "api", "bin/server"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if want := []string{"api"}; !reflect.DeepEqual(got.Names, want) {
+		t.Fatalf("Names = %v, want %v", got.Names, want)
+	}
+	wantArgv := []string{"bin/server"}
+	if !reflect.DeepEqual(got.Argv, wantArgv) {
+		t.Fatalf("Argv = %v, want %v", got.Argv, wantArgv)
+	}
+}
+
 func TestRunCommandAllowsMissingNamesAtParserLevel(t *testing.T) {
 	oldRunner := runRunner
 	t.Cleanup(func() { runRunner = oldRunner })

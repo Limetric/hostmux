@@ -9,19 +9,30 @@ func newRunCmd() *cobra.Command {
 	var names []string
 
 	cmd := &cobra.Command{
-		Use:   "run [--name NAME]... -- COMMAND [ARGS...]",
+		Use:   "run [--name NAME]... [-- COMMAND [ARGS...] | COMMAND [ARGS...]]",
 		Short: "Run a command and register its upstream",
 		Args: func(cmd *cobra.Command, args []string) error {
 			argsLenAtDash := cmd.ArgsLenAtDash()
-			if argsLenAtDash != 0 || len(args) == 0 {
-				return usageErrorf("usage: hostmux run [--name NAME]... [--socket PATH] [--domain DOMAIN] [--prefix NAME | --no-prefix] -- COMMAND [ARGS...]")
+			if len(args) == 0 {
+				return usageErrorf("usage: hostmux run [--name NAME]... [--socket PATH] [--domain DOMAIN] [--prefix NAME | --no-prefix] [--] COMMAND [ARGS...]")
+			}
+			// With no "--", pflag leaves argsLenAtDash at -1 and all tokens are the
+			// child command. A lone "--" sets argsLenAtDash to 0. Positional tokens
+			// before "--" (argsLenAtDash > 0) are ambiguous, so we require flags or
+			// "--" first (e.g. run --name api -- cmd, not run api -- cmd).
+			if argsLenAtDash > 0 {
+				return usageErrorf("usage: hostmux run [--name NAME]... [--socket PATH] [--domain DOMAIN] [--prefix NAME | --no-prefix] [--] COMMAND [ARGS...]")
 			}
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			argsLenAtDash := cmd.ArgsLenAtDash()
 			opts.Names = append([]string(nil), names...)
-			opts.Argv = append([]string(nil), args[argsLenAtDash:]...)
+			if argsLenAtDash < 0 {
+				opts.Argv = append([]string(nil), args...)
+			} else {
+				opts.Argv = append([]string(nil), args[argsLenAtDash:]...)
+			}
 			return runRunner(opts)
 		},
 	}

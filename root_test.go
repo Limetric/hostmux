@@ -237,16 +237,6 @@ func TestStopCommandPassesSocketFlagToRunner(t *testing.T) {
 	}
 }
 
-func TestRunCommandRequiresDashSeparatedChildCommand(t *testing.T) {
-	stdout, stderr, code := runExecuteAndCapture(t, []string{"hostmux", "run", "--name", "api", "bin/server"})
-	if code != 2 {
-		t.Fatalf("execute() code = %d, stdout = %q, stderr = %q", code, stdout, stderr)
-	}
-	if !bytes.Contains([]byte(stderr), []byte("usage: hostmux run [--name NAME]... [--socket PATH] [--domain DOMAIN] [--prefix NAME | --no-prefix] -- COMMAND [ARGS...]")) {
-		t.Fatalf("stderr = %q, want run usage", stderr)
-	}
-}
-
 func runExecuteAndCapture(t *testing.T, args []string) (string, string, int) {
 	t.Helper()
 
