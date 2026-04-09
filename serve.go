@@ -233,7 +233,7 @@ func runForegroundDaemon(opts startOptions) error {
 
 	// Wait for signals.
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	select {
 	case <-sigCh:
 	case <-ctx.Done():

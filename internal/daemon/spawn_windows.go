@@ -38,6 +38,10 @@ func SpawnDetached(args ...string) error {
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	cmd.Stdin = nil
+	// DETACHED_PROCESS prevents the daemon from inheriting the parent's
+	// console (equivalent to Setsid on Unix). CREATE_NEW_PROCESS_GROUP
+	// assigns the daemon its own process group so Ctrl+C signals sent to
+	// the parent terminal are not propagated to the daemon.
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		CreationFlags: detachedProcess | syscall.CREATE_NEW_PROCESS_GROUP,
 	}

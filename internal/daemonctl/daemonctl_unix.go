@@ -15,7 +15,7 @@ func killProcess(pidPath string, graceful bool) error {
 	if err != nil {
 		return err
 	}
-	sig := unix.Signal(unix.SIGKILL)
+	sig := unix.SIGKILL
 	if graceful {
 		sig = unix.SIGTERM
 	}
