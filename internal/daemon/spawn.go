@@ -1,6 +1,6 @@
 // Package daemon contains the auto-spawn helper used by `hostmux run` when
-// the Unix socket is missing. It forks `hostmux start --foreground` detached (its own
-// session) so the daemon outlives the parent, redirects stdout/stderr to
+// the Unix socket is missing. It forks `hostmux start --foreground` detached so
+// the daemon outlives the parent, redirects stdout/stderr to
 // ~/.hostmux/hostmux.log, and polls until the socket accepts connections or
 // the supplied context expires.
 package daemon
@@ -10,10 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"syscall"
 	"time"
 )
 
@@ -74,41 +70,4 @@ func unixDialOK(ctx context.Context, sockPath string) bool {
 
 func defaultSpawn() error {
 	return SpawnDetached("start", "--foreground")
-}
-
-// SpawnDetached forks `<self> <args...>` detached, with stdout/stderr to
-// ~/.hostmux/hostmux.log.
-func SpawnDetached(args ...string) error {
-	self, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-	hostmuxDir := filepath.Join(home, ".hostmux")
-	if err := os.MkdirAll(hostmuxDir, 0o755); err != nil {
-		return err
-	}
-	logPath := filepath.Join(hostmuxDir, "hostmux.log")
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	cmd := exec.Command(self, args...)
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-	cmd.Stdin = nil
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := cmd.Start(); err != nil {
-		logFile.Close()
-		return err
-	}
-	// The child inherited its own copy of the log file's fd via fork; the
-	// parent's copy is no longer needed and would leak if left open.
-	logFile.Close()
-	// Detach: don't Wait, let the daemon outlive us.
-	go func() { _ = cmd.Process.Release() }()
-	return nil
 }
