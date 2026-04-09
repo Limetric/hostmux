@@ -215,7 +215,7 @@ func TestRunInheritsDomainFromDaemonConfig(t *testing.T) {
 	})
 	waitForSocket(t, sockPath, 5*time.Second)
 
-	run := exec.Command(bin, "run", "--socket", sockPath, "api", "--", "/bin/sh", "-c", "sleep 2")
+	run := exec.Command(bin, "run", "--socket", sockPath, "--name", "api", "--", "/bin/sh", "-c", "sleep 2")
 	run.Env = env
 	run.Stdout = testWriter{t}
 	run.Stderr = testWriter{t}
@@ -240,6 +240,54 @@ func TestRunInheritsDomainFromDaemonConfig(t *testing.T) {
 	_ = run.Process.Kill()
 	_ = run.Wait()
 	t.Fatal("registered route did not include daemon domain")
+}
+
+func TestURLInheritsDomainFromDaemonConfig(t *testing.T) {
+	env, _ := isolatedHostmuxEnv(t)
+
+	binDir := t.TempDir()
+	bin := filepath.Join(binDir, "hostmux")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+
+	sockDir, err := os.MkdirTemp("", "hm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(sockDir) })
+	sockPath := filepath.Join(sockDir, "t.sock")
+
+	cfgPath := filepath.Join(binDir, "hostmux.toml")
+	if err := os.WriteFile(cfgPath, []byte("listen = \"127.0.0.1:0\"\ndomain = \"example.com\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	daemonCmd := exec.CommandContext(ctx, bin, "start", "--foreground", "--config", cfgPath, "--socket", sockPath)
+	daemonCmd.Env = env
+	daemonCmd.Stdout = testWriter{t}
+	daemonCmd.Stderr = testWriter{t}
+	if err := daemonCmd.Start(); err != nil {
+		t.Fatalf("start daemon: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = daemonCmd.Process.Kill()
+		_ = daemonCmd.Wait()
+	})
+	waitForSocket(t, sockPath, 5*time.Second)
+
+	urlCmd := exec.Command(bin, "url", "--socket", sockPath, "--no-prefix", "api")
+	urlCmd.Env = env
+	out, err := urlCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("url: %v\n%s", err, out)
+	}
+	if got, want := string(out), "https://api.example.com\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
 }
 
 func waitForSocket(t *testing.T, path string, timeout time.Duration) {
