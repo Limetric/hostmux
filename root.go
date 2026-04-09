@@ -25,13 +25,6 @@ func usageErrorf(format string, args ...any) error {
 	return exitError{code: 2, text: fmt.Sprintf(format, args...)}
 }
 
-func legacyExit(fn func([]string) int, args []string) error {
-	if code := fn(args); code != 0 {
-		return exitError{code: code}
-	}
-	return nil
-}
-
 func execute() int {
 	err := newRootCmd().Execute()
 	if err == nil {
