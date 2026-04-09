@@ -1,7 +1,7 @@
 // Package daemon contains the auto-spawn helper used by `hostmux run` when
 // the Unix socket is missing. It forks `hostmux start --foreground` detached (its own
 // session) so the daemon outlives the parent, redirects stdout/stderr to
-// ~/.hostmux/hostmux.log, and polls the socket path until it comes up or
+// ~/.hostmux/hostmux.log, and polls until the socket accepts connections or
 // the supplied context expires.
 package daemon
 
@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,18 +17,22 @@ import (
 	"time"
 )
 
+// DefaultEnsureTimeout is the suggested deadline for [EnsureRunning] when using
+// the real detached spawn (TLS setup and disk can exceed a couple of seconds).
+const DefaultEnsureTimeout = 8 * time.Second
+
 // EnsureOpts allows tests to inject a fake Spawn function.
 type EnsureOpts struct {
-	// Spawn is called when the socket file is missing. If nil, the real
-	// implementation forks `hostmux start --foreground` detached.
+	// Spawn is called when the socket is missing or not accepting connections.
+	// If nil, the real implementation forks `hostmux start --foreground` detached.
 	Spawn func() error
 }
 
-// EnsureRunning blocks until the Unix socket file at sockPath exists, or ctx
-// expires. If the file is missing on entry, it calls opts.Spawn (or the real
-// fork helper) once and then polls.
+// EnsureRunning blocks until a TCP-style connect to the Unix socket at sockPath
+// succeeds (daemon is listening), or ctx expires. If the socket is not ready on
+// entry, it calls opts.Spawn (or the real fork helper) once and then polls.
 func EnsureRunning(ctx context.Context, sockPath string, opts EnsureOpts) error {
-	if _, err := os.Stat(sockPath); err == nil {
+	if unixDialOK(sockPath) {
 		return nil
 	}
 	spawn := opts.Spawn
@@ -40,7 +45,7 @@ func EnsureRunning(ctx context.Context, sockPath string, opts EnsureOpts) error 
 	tick := time.NewTicker(20 * time.Millisecond)
 	defer tick.Stop()
 	for {
-		if _, err := os.Stat(sockPath); err == nil {
+		if unixDialOK(sockPath) {
 			return nil
 		}
 		select {
@@ -49,6 +54,15 @@ func EnsureRunning(ctx context.Context, sockPath string, opts EnsureOpts) error 
 		case <-tick.C:
 		}
 	}
+}
+
+func unixDialOK(sockPath string) bool {
+	conn, err := net.DialTimeout("unix", sockPath, 100*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 func defaultSpawn() error {

@@ -41,7 +41,7 @@ func runStart(opts startOptions) error {
 
 	spawnArgs := startForegroundArgs(opts.ConfigPath, opts.SocketPath, opts.Force)
 	if !opts.Force {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), daemon.DefaultEnsureTimeout)
 		err := daemon.EnsureRunning(ctx, sockPath, daemon.EnsureOpts{
 			Spawn: func() error { return daemon.SpawnDetached(spawnArgs...) },
 		})
