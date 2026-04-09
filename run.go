@@ -165,18 +165,6 @@ func validateExplicitNames(names []string) error {
 	return nil
 }
 
-func splitHosts(s string) []string {
-	parts := strings.Split(s, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
 func resolvePrefix(flagValue string, disable bool) (string, error) {
 	if disable {
 		return "", nil
