@@ -41,8 +41,7 @@ func runCommand(opts runOptions) error {
 		return exitError{code: 1}
 	}
 
-	hosts := names
-	hosts, err = resolveRequestedHosts(hosts, hostResolveOptions{
+	hosts, err := resolveRequestedHosts(names, hostResolveOptions{
 		Domain:   opts.Domain,
 		Prefix:   opts.Prefix,
 		NoPrefix: opts.NoPrefix,
@@ -148,11 +147,10 @@ func runCommand(opts runOptions) error {
 
 func validateExplicitNames(names []string) error {
 	for _, name := range names {
-		trimmed := strings.TrimSpace(name)
-		if trimmed == "" {
+		if strings.TrimSpace(name) == "" {
 			return fmt.Errorf("--name must be non-empty")
 		}
-		for _, r := range trimmed {
+		for _, r := range name {
 			isAlphaNum := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
 			switch {
 			case isAlphaNum:
