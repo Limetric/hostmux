@@ -1,74 +1,64 @@
 # hostmux
 
-`hostmux` is a small Go reverse proxy for host-based routing. It gives you one local entrypoint for many apps: you can keep long-lived routes in a TOML config, or use `hostmux run` to start a dev process, allocate a free port, register one or more subdomains or hostnames, and clean everything up automatically when the process exits.
+**hostmux** is a small reverse proxy built around **host-based routing**: one local HTTPS listener fronts every app you run, so you stop juggling ad hoc ports and scattered reverse-proxy snippets. Point [**Cloudflare Tunnel**](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/) (`cloudflared`) at that listener and you can share **real hostnames** (`app.example.com`, `api.example.com`) for local development, so teammates and other devices (e.g. phones for testing) hit the same URLs you do without checking in brittle port numbers or tunnel config per repo.
 
-It is designed to sit behind cloudflared (Argo Tunnel) or run standalone when you want a simple host router without maintaining per-app reverse proxy config.
+- **Single static binary** — self-hosted; one executable, no separate proxy stack to install
+- **Host-based routing** — one HTTPS entrypoint; route many upstreams by the `Host` header
+- **Cloudflare Tunnel** — works well with [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/) (`cloudflared`): point the tunnel at hostmux’s HTTPS listener and serve local development through Cloudflare’s edge and DNS
+- **Ephemeral port per process** — hostmux picks a free TCP port, injects `PORT` into your dev command, registers hostnames, streams stdio, and tears down routes on exit (including crash or `kill -9`)
+- **Git worktrees** — auto-prefix hostnames so parallel branches of the same repo don’t collide
+- **Persistent routes** — optional TOML with hot reload when you prefer config-as-code
+
+## Install
+
+Download the latest binary from [GitHub Releases](https://github.com/Limetric/hostmux/releases/latest), or build from source:
+
+```bash
+git clone https://github.com/Limetric/hostmux.git
+cd hostmux
+go build -o build/hostmux .
+```
+
+The examples below assume `hostmux` is on your `PATH`.
 
 ## Quick Start
 
 ```sh
-# Build from source.
-go build -o build/hostmux .
+# Start the daemon with TLS enabled by default on :8443 (hostmux start --foreground to stay attached).
+hostmux start
 
-# Start the daemon with TLS enabled by default on :8443.
-./build/hostmux start
-
-# In another terminal, run a dev server and register a subdomain for it.
-./build/hostmux run --domain example.com --name myapp -- bun run dev
+# Run a dev server and register a subdomain for it (starts the daemon in the background if it is not already running).
+hostmux run --domain example.com --name myapp -- bun run dev
 
 # Inspect the active routes.
-./build/hostmux routes
+hostmux routes
 
 # Print the URL for a route without starting anything.
-./build/hostmux url --domain example.com --name myapp
+hostmux url --domain example.com --name myapp
 
 # Stop the daemon.
-./build/hostmux stop
+hostmux stop
 ```
 
-More useful commands:
+Tired of typing `--domain` on every line? Put `domain = "example.com"` in `~/.config/hostmux/hostmux.toml`, restart the daemon, and bare `--name` / `hostmux url` picks that up. Same hostnames, less copy-paste.
+
+## More useful commands
 
 ```sh
 # Multiple subdomains for the same upstream.
-./build/hostmux run --domain example.com --name app --name admin -- bun run dev
+hostmux run --domain example.com --name app --name admin -- bun run dev
 
 # Omit --name to infer from the nearest ancestor package.json name.
-./build/hostmux run --domain example.com -- bun run dev
+hostmux run --domain example.com -- bun run dev
 
 # Full hostnames skip domain expansion, but still use the normal prefix logic unless --no-prefix is set.
-./build/hostmux run --name admin.other.test -- bun run dev
+hostmux run --name myapp.example.org -- bun run dev
 
 # Print the final URL using the same domain/prefix logic as `run`.
-./build/hostmux url --domain example.com --name app
-./build/hostmux url --domain example.com --prefix feature-x --name app
-./build/hostmux url --domain example.com --name app --name admin
-
-# Replace a running daemon (e.g. after rebuilding the binary or editing config).
-./build/hostmux start --force
-
-# Run the daemon in the foreground.
-./build/hostmux start --foreground
+hostmux url --domain example.com --name app
+hostmux url --domain example.com --prefix feature-x --name app
+hostmux url --domain example.com --name app --name admin
 ```
-
-`hostmux run` allocates a free TCP port, sets `PORT=<port>` in the child's environment, expands bare subdomains using `--domain` (or the daemon's configured `domain`), registers the resulting hostnames with the daemon, streams the child's stdio, and automatically deregisters when the child exits - even on crash or `kill -9`.
-
-Pass one or more `--name` flags to register explicit bare labels, full hostnames, or IP literals:
-
-```sh
-./build/hostmux run --domain example.com --name app --name admin -- bun run dev
-```
-
-If you omit `--name`, `hostmux run` infers one name in this order:
-
-1. The nearest ancestor `package.json` `name`, walking upward from the current working directory until the git repo root.
-2. The git repo root directory basename.
-3. The current working directory basename.
-
-Inferred names are normalized to lowercase DNS-safe labels. Without `--domain`, bare names expand using the daemon's configured domain when a daemon is available (the config file defaults `domain` to `localhost` when the field is omitted). When neither `--domain` nor a daemon domain is available—for example no daemon is running—bare names pass through unchanged.
-
-If the child process takes its own flags (arguments starting with `-` or `--`), keep a `--` separator before the child so hostmux does not parse them (for example `./build/hostmux run -- vite dev --host 0.0.0.0`).
-
-`hostmux url` prints one `https://<hostname>` line per requested name using the same `--name`, `--domain`, `--prefix`, and `--no-prefix` resolution path as `hostmux run`. If `--name` is omitted, it uses the same inference order. If `--domain` is omitted and a daemon is available, it also reuses the daemon's configured domain for bare names.
 
 ## Behind cloudflared
 
@@ -86,9 +76,7 @@ ingress:
       noTLSVerify: true
 ```
 
-`cloudflared` requires an HTTPS origin for `http2Origin: true`, so the old h2c-only standalone path is not enough for tunnel-to-origin HTTP/2.
-
-## Persistent routes
+## Example config with persistent routes
 
 Create a TOML config (default: `~/.config/hostmux/hostmux.toml`):
 
@@ -106,28 +94,11 @@ hosts = ["api"]
 upstream = "http://127.0.0.1:8080"
 
 [[app]]
-hosts = ["admin", "admin.other.test"]
+hosts = ["admin", "myapp.example.org"]
 upstream = "http://127.0.0.1:9000"
 ```
 
-Bare `hosts` entries expand against the top-level `domain` (default `localhost` when omitted); entries that already contain a dot are treated as full hostnames and kept unchanged. An explicit `domain = ""` in TOML is treated the same as omitting `domain` and still defaults to `localhost`.
-
 Run with `hostmux start --config /path/to/hostmux.toml`. The file is hot-reloaded on save.
-
-If you already have an older config using top-level `listen = "..."`
-without a `[tls]` block, that listen address still applies to the default TLS
-listener.
-
-## Worktrees
-
-`hostmux run` auto-detects non-primary git worktrees and prepends the worktree name to the requested subdomain or hostname so two checkouts of the same project don't collide:
-
-| cwd | command | actual hostnames |
-|---|---|---|
-| `~/proj/main` (primary) | `hostmux run --domain example.com --name myapp -- ...` | `myapp.example.com` |
-| `~/proj/feature-x` (worktree) | `hostmux run --domain example.com --name myapp -- ...` | `feature-x-myapp.example.com` |
-
-Override with `--prefix NAME` or disable with `--no-prefix`.
 
 ## How it's built
 
