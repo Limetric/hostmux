@@ -9,7 +9,7 @@ func newURLCmd() *cobra.Command {
 	var names []string
 
 	cmd := &cobra.Command{
-		Use:   "url [NAME]... [--name NAME]...",
+		Use:   "url [--name NAME]... [NAME]...",
 		Short: "Print the public URL for a host",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Names = append(append([]string(nil), names...), args...)

@@ -45,6 +45,46 @@ func TestURLCommandAcceptsPositionalName(t *testing.T) {
 	}
 }
 
+func TestURLCommandAcceptsMultiplePositionalNames(t *testing.T) {
+	cmd := newURLCmd()
+	cmd.SetArgs([]string{"--domain", "example.com", "--no-prefix", "api", "admin"})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if got, want := stdout.String(), "https://api.example.com\nhttps://admin.example.com\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty stderr", stderr.String())
+	}
+}
+
+func TestURLCommandMergesNamesFromFlagsAndPositional(t *testing.T) {
+	cmd := newURLCmd()
+	cmd.SetArgs([]string{"--domain", "example.com", "--no-prefix", "--name", "api", "my-app"})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if got, want := stdout.String(), "https://api.example.com\nhttps://my-app.example.com\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty stderr", stderr.String())
+	}
+}
+
 func TestURLCommandUsesCobraOutputWriter(t *testing.T) {
 	cmd := newURLCmd()
 	cmd.SetArgs([]string{"--domain", "example.com", "--no-prefix", "--name", "backend"})
@@ -150,7 +190,7 @@ func TestURLHelpShowsRepeatedNameUsage(t *testing.T) {
 
 	help := stdout.String()
 	for _, want := range []string{
-		"url [NAME]... [--name NAME]...",
+		"url [--name NAME]... [NAME]...",
 		"Print the public URL for a host",
 		"repeatable hostname to print",
 	} {
