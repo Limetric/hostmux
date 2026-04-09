@@ -32,7 +32,7 @@ upstream = "http://127.0.0.1:8080"
 	}
 }
 
-func TestLoadLeavesBareHostsUnchangedWithoutTopLevelDomain(t *testing.T) {
+func TestLoadExpandsBareHostsUsingDefaultDomain(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hostmux.toml")
 	writeFile(t, path, `
@@ -45,7 +45,10 @@ upstream = "http://127.0.0.1:8080"
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got := cfg.Apps[0].Hosts; len(got) != 1 || got[0] != "api" {
+	if cfg.Domain != "localhost" {
+		t.Fatalf("domain = %q", cfg.Domain)
+	}
+	if got := cfg.Apps[0].Hosts; len(got) != 1 || got[0] != "api.localhost" {
 		t.Fatalf("hosts = %v", got)
 	}
 }
