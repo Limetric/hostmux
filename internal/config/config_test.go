@@ -57,6 +57,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Listen != ":8443" {
 		t.Fatalf("listen default = %q", cfg.Listen)
 	}
+	if cfg.Domain != "localhost" {
+		t.Fatalf("domain default = %q", cfg.Domain)
+	}
 }
 
 func TestLoadTLSDefaultsListenWhenBlockPresent(t *testing.T) {

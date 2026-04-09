@@ -64,7 +64,7 @@ If you omit `--name`, `hostmux run` infers one name in this order:
 2. The git repo root directory basename.
 3. The current working directory basename.
 
-Inferred names are normalized to lowercase DNS-safe labels. Without either `--domain` or a daemon-configured domain, bare names pass through unchanged.
+Inferred names are normalized to lowercase DNS-safe labels. Without `--domain`, bare names expand using the daemon's configured domain when a daemon is available (the config file defaults `domain` to `localhost` when the field is omitted). When neither `--domain` nor a daemon domain is available—for example no daemon is running—bare names pass through unchanged.
 
 If the child process takes its own flags (arguments starting with `-` or `--`), keep a `--` separator before the child so hostmux does not parse them (for example `./build/hostmux run -- vite dev --host 0.0.0.0`).
 
@@ -110,7 +110,7 @@ hosts = ["admin", "admin.other.test"]
 upstream = "http://127.0.0.1:9000"
 ```
 
-Bare `hosts` entries expand against the top-level `domain`; entries that already contain a dot are treated as full hostnames and kept unchanged.
+Bare `hosts` entries expand against the top-level `domain` (default `localhost` when omitted); entries that already contain a dot are treated as full hostnames and kept unchanged. An explicit `domain = ""` in TOML is treated the same as omitting `domain` and still defaults to `localhost`.
 
 Run with `hostmux start --config /path/to/hostmux.toml`. The file is hot-reloaded on save.
 

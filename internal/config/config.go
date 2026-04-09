@@ -18,7 +18,12 @@ import (
 	"github.com/Limetric/hostmux/internal/router"
 )
 
-const DefaultTLSListen = ":8443"
+const (
+	DefaultTLSListen = ":8443"
+	// DefaultDomain is the base domain used to expand bare host labels in config
+	// when the domain field is omitted (e.g. "api" → "api.localhost").
+	DefaultDomain = "localhost"
+)
 
 // Config is the parsed TOML config file.
 type Config struct {
@@ -59,6 +64,9 @@ func Load(path string) (*Config, error) {
 func (c *Config) applyDefaults() {
 	if c.Listen == "" {
 		c.Listen = DefaultTLSListen
+	}
+	if c.Domain == "" {
+		c.Domain = DefaultDomain
 	}
 	if c.TLS != nil && c.TLS.Listen == "" {
 		c.TLS.Listen = c.Listen
