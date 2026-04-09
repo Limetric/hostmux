@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -100,13 +101,13 @@ func runCommand(opts runOptions) error {
 	// HOSTMUX_URL uses the first registered hostname only. Omit the variable
 	// entirely unless OpInfo succeeded—otherwise bare-host fallback could
 	// produce useless values like "https://api" with no domain.
+	printScheme := "http"
+	if err == nil && publicHTTPS {
+		printScheme = "https"
+	}
 	var publicURL string
-	if err == nil {
-		scheme := "http"
-		if publicHTTPS {
-			scheme = "https"
-		}
-		publicURL = scheme + "://" + hosts[0]
+	if err == nil && len(hosts) > 0 {
+		publicURL = (&url.URL{Scheme: printScheme, Host: hosts[0]}).String()
 	}
 	upstream := fmt.Sprintf("http://127.0.0.1:%d", port)
 	if err := enc.Encode(&sockproto.Message{Op: sockproto.OpRegister, Hosts: hosts, Upstream: upstream}); err != nil {
@@ -123,9 +124,10 @@ func runCommand(opts runOptions) error {
 		return exitError{code: 1}
 	}
 
-	// Tell the user where to hit.
+	// Tell the user where to hit (full URL so terminals linkify it).
 	for _, h := range hosts {
-		fmt.Fprintf(os.Stderr, "→ %s → %s\n", h, upstream)
+		edge := (&url.URL{Scheme: printScheme, Host: h}).String()
+		fmt.Fprintf(os.Stderr, "→ %s → %s\n", edge, upstream)
 	}
 
 	// Run the child to completion.
