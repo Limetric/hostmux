@@ -15,22 +15,15 @@ type urlOptions struct {
 	Prefix     string
 	NoPrefix   bool
 	Names      []string
-	// HostArg remains as a direct test seam for legacy helper-driven coverage.
-	HostArg string
-	Writer  io.Writer
+	Writer     io.Writer
 }
 
 func runURL(opts urlOptions) error {
-	explicit := append([]string(nil), opts.Names...)
-	if len(explicit) == 0 {
-		explicit = splitHosts(opts.HostArg)
-	}
-
-	if err := validateExplicitNames(explicit); err != nil {
+	if err := validateExplicitNames(opts.Names); err != nil {
 		return exitError{code: 2, text: fmt.Sprintf("hostmux url: %v", err)}
 	}
 
-	hosts, err := resolveRequestedNames(explicit)
+	hosts, err := resolveRequestedNames(opts.Names)
 	if err != nil {
 		return exitError{code: 1, text: fmt.Sprintf("hostmux url: %v", err)}
 	}

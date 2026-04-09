@@ -109,6 +109,21 @@ func TestResolveRequestedNamesDoesNotWalkPastStartDirOutsideGit(t *testing.T) {
 	}
 }
 
+func TestResolveRequestedNamesDoesNotPrintGitErrorsOutsideRepo(t *testing.T) {
+	wd := filepath.Join(t.TempDir(), "My App!!!")
+	mustMkdirAll(t, wd)
+
+	stderr, restoreStderr := captureRootFileOutput(t, &os.Stderr)
+	_, err := resolveRequestedNamesInDir(wd, nil)
+	restoreStderr()
+	if err != nil {
+		t.Fatalf("resolveRequestedNames() error = %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty stderr", stderr.String())
+	}
+}
+
 func TestResolveRequestedNamesErrorsWhenInferenceNormalizesEmpty(t *testing.T) {
 	wd := filepath.Join(t.TempDir(), "---")
 	mustMkdirAll(t, wd)

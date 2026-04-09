@@ -14,8 +14,8 @@ import (
 
 func TestURLCommandPrintsExpandedURLWithDomainFlag(t *testing.T) {
 	stdout, stderr, err := runURLAndCapture(t, urlOptions{
-		Domain:  "example.com",
-		HostArg: "backend",
+		Domain: "example.com",
+		Names:  []string{"backend"},
 	})
 	if err != nil {
 		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)
@@ -105,8 +105,8 @@ func TestURLCommandRejectsInvalidExplicitName(t *testing.T) {
 
 func TestRunURLSupportsMultipleExplicitNames(t *testing.T) {
 	stdout, stderr, err := runURLAndCapture(t, urlOptions{
-		Domain:  "example.com",
-		HostArg: "backend,admin",
+		Domain: "example.com",
+		Names:  []string{"backend", "admin"},
 	})
 	if err != nil {
 		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)
@@ -142,9 +142,9 @@ func TestURLHelpShowsRepeatedNameUsage(t *testing.T) {
 
 func TestURLCommandAppliesPrefixBeforeDomainExpansion(t *testing.T) {
 	stdout, stderr, err := runURLAndCapture(t, urlOptions{
-		Domain:  "example.com",
-		Prefix:  "feature-x",
-		HostArg: "backend",
+		Domain: "example.com",
+		Prefix: "feature-x",
+		Names:  []string{"backend"},
 	})
 	if err != nil {
 		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)
@@ -158,7 +158,7 @@ func TestURLCommandNoPrefixFlagLeavesHostUnprefixed(t *testing.T) {
 	stdout, stderr, err := runURLAndCapture(t, urlOptions{
 		Domain:   "example.com",
 		NoPrefix: true,
-		HostArg:  "backend",
+		Names:    []string{"backend"},
 	})
 	if err != nil {
 		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)
@@ -205,7 +205,7 @@ func TestURLCommandUsesDaemonDomainForBareHost(t *testing.T) {
 
 	stdout, stderr, err := runURLAndCapture(t, urlOptions{
 		SocketPath: sockPath,
-		HostArg:    "backend",
+		Names:      []string{"backend"},
 	})
 	if err != nil {
 		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)
@@ -227,7 +227,7 @@ func TestURLCommandUsesDaemonDomainForBareHost(t *testing.T) {
 func TestURLCommandPassesThroughBareHostWhenNoDomainAvailable(t *testing.T) {
 	stdout, stderr, err := runURLAndCapture(t, urlOptions{
 		SocketPath: filepath.Join(t.TempDir(), "missing.sock"),
-		HostArg:    "backend",
+		Names:      []string{"backend"},
 	})
 	if err != nil {
 		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)
@@ -242,8 +242,8 @@ func TestURLCommandPassesThroughBareHostWhenNoDomainAvailable(t *testing.T) {
 
 func TestURLCommandPreservesFullHostnameWithDomainFlag(t *testing.T) {
 	stdout, stderr, err := runURLAndCapture(t, urlOptions{
-		Domain:  "example.com",
-		HostArg: "admin.other.test",
+		Domain: "example.com",
+		Names:  []string{"admin.other.test"},
 	})
 	if err != nil {
 		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)
@@ -257,7 +257,7 @@ func TestURLCommandDomainFlagTakesPriorityOverDaemonLookup(t *testing.T) {
 	stdout, stderr, err := runURLAndCapture(t, urlOptions{
 		SocketPath: filepath.Join(t.TempDir(), "missing.sock"),
 		Domain:     "example.com",
-		HostArg:    "backend",
+		Names:      []string{"backend"},
 	})
 	if err != nil {
 		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)
@@ -270,10 +270,10 @@ func TestURLCommandDomainFlagTakesPriorityOverDaemonLookup(t *testing.T) {
 	}
 }
 
-func TestURLCommandPrintsMultipleHostsFromHostArg(t *testing.T) {
+func TestURLCommandPrintsMultipleHostsFromNames(t *testing.T) {
 	stdout, stderr, err := runURLAndCapture(t, urlOptions{
-		Domain:  "example.com",
-		HostArg: "backend,admin",
+		Domain: "example.com",
+		Names:  []string{"backend", "admin"},
 	})
 	if err != nil {
 		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)

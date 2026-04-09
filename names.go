@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -131,6 +132,7 @@ func runGit(dir string, args ...string) (string, error) {
 	cmd.Dir = dir
 	var out bytes.Buffer
 	cmd.Stdout = &out
+	cmd.Stderr = io.Discard
 	if err := cmd.Run(); err != nil {
 		return "", err
 	}

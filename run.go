@@ -32,7 +32,7 @@ func runCommand(opts runOptions) error {
 
 	if err := validateExplicitNames(opts.Names); err != nil {
 		fmt.Fprintf(os.Stderr, "hostmux run: %v\n", err)
-		return exitError{code: 1}
+		return exitError{code: 2}
 	}
 
 	names, err := resolveRequestedNames(opts.Names)
