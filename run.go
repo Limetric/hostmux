@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/Limetric/hostmux/internal/childproc"
 	"github.com/Limetric/hostmux/internal/daemon"
@@ -60,7 +59,8 @@ func runCommand(opts runOptions) error {
 		return exitError{code: 1}
 	}
 	if !sockpath.IsExplicit(sockOpts) {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		// Same budget as `hostmux start`: child runs full daemon init before the socket accepts.
+		ctx, cancel := context.WithTimeout(context.Background(), daemon.DefaultEnsureTimeout)
 		if err := daemon.EnsureRunning(ctx, sockPath, daemon.EnsureOpts{}); err != nil {
 			cancel()
 			fmt.Fprintf(os.Stderr, "hostmux run: could not start daemon: %v\n", err)
