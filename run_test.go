@@ -404,20 +404,7 @@ func runRunCommandAndCapture(t *testing.T, script runServerScript, args []string
 		}
 	}()
 
-	var stderr bytes.Buffer
-	oldStderr := os.Stderr
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stderr = w
-	t.Cleanup(func() { os.Stderr = oldStderr })
-
-	done := make(chan struct{})
-	go func() {
-		_, _ = stderr.ReadFrom(r)
-		close(done)
-	}()
+	stderr, restoreStderr := captureRootFileOutput(t, &os.Stderr)
 
 	cmd := newRunCmd()
 	cmd.SetArgs(append([]string{"--socket", sockPath}, args...))
@@ -434,8 +421,7 @@ func runRunCommandAndCapture(t *testing.T, script runServerScript, args []string
 		}
 	}
 
-	_ = w.Close()
-	<-done
+	restoreStderr()
 
 	var hosts []string
 	select {
