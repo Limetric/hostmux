@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -92,6 +93,73 @@ func TestRunCommandDelegatesToRunner(t *testing.T) {
 	wantArgv := []string{"bin/server"}
 	if !reflect.DeepEqual(got.Argv, wantArgv) {
 		t.Fatalf("Argv = %v, want %v", got.Argv, wantArgv)
+	}
+}
+
+func TestRunCommandWithoutDoubleDashPassesArgsAsChild(t *testing.T) {
+	oldRunner := runRunner
+	t.Cleanup(func() { runRunner = oldRunner })
+
+	var got runOptions
+	runRunner = func(opts runOptions) error {
+		got = opts
+		return nil
+	}
+
+	cmd := newRunCmd()
+	cmd.SetArgs([]string{"vite", "dev"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	wantArgv := []string{"vite", "dev"}
+	if !reflect.DeepEqual(got.Argv, wantArgv) {
+		t.Fatalf("Argv = %v, want %v", got.Argv, wantArgv)
+	}
+}
+
+func TestRunCommandChildAfterFlagsWithoutDoubleDash(t *testing.T) {
+	oldRunner := runRunner
+	t.Cleanup(func() { runRunner = oldRunner })
+
+	var got runOptions
+	runRunner = func(opts runOptions) error {
+		got = opts
+		return nil
+	}
+
+	cmd := newRunCmd()
+	cmd.SetArgs([]string{"--name", "api", "bin/server"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if want := []string{"api"}; !reflect.DeepEqual(got.Names, want) {
+		t.Fatalf("Names = %v, want %v", got.Names, want)
+	}
+	wantArgv := []string{"bin/server"}
+	if !reflect.DeepEqual(got.Argv, wantArgv) {
+		t.Fatalf("Argv = %v, want %v", got.Argv, wantArgv)
+	}
+}
+
+func TestRunCommandRejectsPositionalsBeforeDoubleDash(t *testing.T) {
+	var stderr bytes.Buffer
+	cmd := newRunCmd()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"api", "--", "true"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want usage error")
+	}
+	var exitErr exitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("Execute() error = %T %v, want exitError", err, err)
+	}
+	if exitErr.code != 2 {
+		t.Fatalf("exit code = %d, want 2", exitErr.code)
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte("usage: hostmux run")) {
+		t.Fatalf("stderr = %q, want usage substring", stderr.String())
 	}
 }
 
