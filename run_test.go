@@ -13,6 +13,85 @@ import (
 	"github.com/Limetric/hostmux/internal/sockproto"
 )
 
+func TestRunCommandSeparatesHostsAndChildArgs(t *testing.T) {
+	oldRunner := runRunner
+	t.Cleanup(func() { runRunner = oldRunner })
+
+	var got runOptions
+	runRunner = func(opts runOptions) error {
+		got = opts
+		return nil
+	}
+
+	cmd := newRunCmd()
+	cmd.SetArgs([]string{
+		"--socket", "/tmp/hostmux.sock",
+		"--domain", "example.com",
+		"--prefix", "feature-x",
+		"backend,admin",
+		"--",
+		"bin/server",
+		"--listen",
+		":8080",
+	})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if got.SocketPath != "/tmp/hostmux.sock" {
+		t.Fatalf("SocketPath = %q, want %q", got.SocketPath, "/tmp/hostmux.sock")
+	}
+	if got.Domain != "example.com" {
+		t.Fatalf("Domain = %q, want %q", got.Domain, "example.com")
+	}
+	if got.Prefix != "feature-x" {
+		t.Fatalf("Prefix = %q, want %q", got.Prefix, "feature-x")
+	}
+	if got.HostsArg != "backend,admin" {
+		t.Fatalf("HostsArg = %q, want %q", got.HostsArg, "backend,admin")
+	}
+	wantArgv := []string{"bin/server", "--listen", ":8080"}
+	if !reflect.DeepEqual(got.Argv, wantArgv) {
+		t.Fatalf("Argv = %v, want %v", got.Argv, wantArgv)
+	}
+}
+
+func TestCmdRunDelegatesToCobraRunRunner(t *testing.T) {
+	oldRunner := runRunner
+	t.Cleanup(func() { runRunner = oldRunner })
+
+	var got runOptions
+	runRunner = func(opts runOptions) error {
+		got = opts
+		return nil
+	}
+
+	code := cmdRun([]string{
+		"--socket", "/tmp/hostmux.sock",
+		"--domain", "example.com",
+		"api",
+		"--",
+		"bin/server",
+	})
+	if code != 0 {
+		t.Fatalf("cmdRun exit code = %d, want 0", code)
+	}
+	if got.SocketPath != "/tmp/hostmux.sock" {
+		t.Fatalf("SocketPath = %q, want %q", got.SocketPath, "/tmp/hostmux.sock")
+	}
+	if got.Domain != "example.com" {
+		t.Fatalf("Domain = %q, want %q", got.Domain, "example.com")
+	}
+	if got.HostsArg != "api" {
+		t.Fatalf("HostsArg = %q, want %q", got.HostsArg, "api")
+	}
+	wantArgv := []string{"bin/server"}
+	if !reflect.DeepEqual(got.Argv, wantArgv) {
+		t.Fatalf("Argv = %v, want %v", got.Argv, wantArgv)
+	}
+}
+
 func TestCmdRunUsesDashBetweenPrefixAndHost(t *testing.T) {
 	sockDir, err := os.MkdirTemp("", "hm")
 	if err != nil {

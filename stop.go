@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"os"
 	"time"
@@ -10,15 +9,15 @@ import (
 	"github.com/Limetric/hostmux/internal/sockpath"
 )
 
-func cmdStop(args []string) int {
-	fs := flag.NewFlagSet("stop", flag.ExitOnError)
-	socketFlag := fs.String("socket", "", "override Unix socket path")
-	fs.Parse(args)
+type stopOptions struct {
+	SocketPath string
+}
 
-	sockPath, err := sockpath.Resolve(sockpath.Options{Flag: *socketFlag})
+func runStop(opts stopOptions) error {
+	sockPath, err := sockpath.Resolve(sockpath.Options{Flag: opts.SocketPath})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hostmux stop: %v\n", err)
-		return 1
+		return exitError{code: 1}
 	}
 	pidPath := sockpath.PIDFilePathFor(sockPath)
 
@@ -30,11 +29,11 @@ func cmdStop(args []string) int {
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hostmux stop: %v\n", err)
-		return 1
+		return exitError{code: 1}
 	}
 	if res.NotRunning {
 		fmt.Fprintf(os.Stderr, "hostmux stop: no daemon running on %s\n", sockPath)
-		return 0
+		return nil
 	}
 	switch {
 	case res.UsedSIGKILL:
@@ -44,5 +43,5 @@ func cmdStop(args []string) int {
 	default:
 		fmt.Fprintf(os.Stderr, "hostmux stop: stopped daemon on %s (SIGTERM)\n", sockPath)
 	}
-	return 0
+	return nil
 }

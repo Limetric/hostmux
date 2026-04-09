@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"flag"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -17,68 +17,74 @@ import (
 	"github.com/Limetric/hostmux/internal/worktree"
 )
 
+type runOptions struct {
+	SocketPath string
+	Domain     string
+	Prefix     string
+	NoPrefix   bool
+	HostsArg   string
+	Argv       []string
+}
+
 func cmdRun(args []string) int {
-	fs := flag.NewFlagSet("run", flag.ExitOnError)
-	socketFlag := fs.String("socket", "", "override Unix socket path")
-	domainFlag := fs.String("domain", "", "expand bare subdomains using this base domain")
-	prefixFlag := fs.String("prefix", "", "explicit hostname prefix (overrides worktree detection)")
-	noPrefix := fs.Bool("no-prefix", false, "disable worktree auto-prefixing")
-	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: hostmux run HOSTS [--socket PATH] [--domain DOMAIN] [--prefix NAME | --no-prefix] -- COMMAND [ARGS...]\n")
-		fs.PrintDefaults()
-	}
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	if fs.NArg() < 2 {
-		fs.Usage()
-		return 2
-	}
-	hostsArg := fs.Arg(0)
-	cmdArgv := fs.Args()[1:]
-	if len(cmdArgv) > 0 && cmdArgv[0] == "--" {
-		cmdArgv = cmdArgv[1:]
-	}
-	if len(cmdArgv) == 0 {
-		fs.Usage()
-		return 2
+	cmd := newRunCmd()
+	cmd.SetArgs(args)
+	err := cmd.Execute()
+	if err == nil {
+		return 0
 	}
 
-	hosts := splitHosts(hostsArg)
+	var exitErr exitError
+	if errors.As(err, &exitErr) {
+		if exitErr.text != "" {
+			fmt.Fprintln(os.Stderr, exitErr.text)
+		}
+		return exitErr.code
+	}
+	fmt.Fprintln(os.Stderr, err)
+	return 1
+}
+
+func runCommand(opts runOptions) error {
+	if opts.HostsArg == "" || len(opts.Argv) == 0 {
+		return usageErrorf("usage: hostmux run HOSTS [--socket PATH] [--domain DOMAIN] [--prefix NAME | --no-prefix] -- COMMAND [ARGS...]")
+	}
+
+	hosts := splitHosts(opts.HostsArg)
 	if len(hosts) == 0 {
 		fmt.Fprintln(os.Stderr, "hostmux run: HOSTS is empty")
-		return 2
+		return exitError{code: 2}
 	}
 
 	hosts, err := resolveRequestedHosts(hosts, hostResolveOptions{
-		Domain:   *domainFlag,
-		Prefix:   *prefixFlag,
-		NoPrefix: *noPrefix,
+		Domain:   opts.Domain,
+		Prefix:   opts.Prefix,
+		NoPrefix: opts.NoPrefix,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hostmux run: %v\n", err)
-		return 1
+		return exitError{code: 1}
 	}
 
 	// Resolve socket path and ensure daemon is running.
-	sockOpts := sockpath.Options{Flag: *socketFlag}
+	sockOpts := sockpath.Options{Flag: opts.SocketPath}
 	sockPath, err := sockpath.Resolve(sockOpts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hostmux run: %v\n", err)
-		return 1
+		return exitError{code: 1}
 	}
 	if !sockpath.IsExplicit(sockOpts) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		if err := daemon.EnsureRunning(ctx, sockPath, daemon.EnsureOpts{}); err != nil {
 			cancel()
 			fmt.Fprintf(os.Stderr, "hostmux run: could not start daemon: %v\n", err)
-			return 1
+			return exitError{code: 1}
 		}
 		cancel()
 	} else {
 		if _, err := os.Stat(sockPath); err != nil {
 			fmt.Fprintf(os.Stderr, "hostmux run: socket %s not reachable; start hostmux first with `hostmux start`\n", sockPath)
-			return 1
+			return exitError{code: 1}
 		}
 	}
 
@@ -86,14 +92,14 @@ func cmdRun(args []string) int {
 	port, err := childproc.AllocateFreePort()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hostmux run: %v\n", err)
-		return 1
+		return exitError{code: 1}
 	}
 
 	// Connect & register.
 	conn, err := net.Dial("unix", sockPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hostmux run: dial %s: %v\n", sockPath, err)
-		return 1
+		return exitError{code: 1}
 	}
 	defer conn.Close()
 	enc := sockproto.NewEncoder(conn)
@@ -120,16 +126,16 @@ func cmdRun(args []string) int {
 	upstream := fmt.Sprintf("http://127.0.0.1:%d", port)
 	if err := enc.Encode(&sockproto.Message{Op: sockproto.OpRegister, Hosts: hosts, Upstream: upstream}); err != nil {
 		fmt.Fprintf(os.Stderr, "hostmux run: register: %v\n", err)
-		return 1
+		return exitError{code: 1}
 	}
 	regResp, err := dec.Decode()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hostmux run: register response: %v\n", err)
-		return 1
+		return exitError{code: 1}
 	}
 	if !regResp.Ok {
 		fmt.Fprintf(os.Stderr, "hostmux run: register rejected: %s\n", regResp.Error)
-		return 1
+		return exitError{code: 1}
 	}
 
 	// Tell the user where to hit.
@@ -142,13 +148,16 @@ func cmdRun(args []string) int {
 		Port:       port,
 		Host:       "127.0.0.1",
 		HostmuxURL: publicURL,
-		Argv:       cmdArgv,
+		Argv:       opts.Argv,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hostmux run: child: %v\n", err)
-		return 1
+		return exitError{code: 1}
 	}
-	return code
+	if code != 0 {
+		return exitError{code: code}
+	}
+	return nil
 }
 
 func splitHosts(s string) []string {

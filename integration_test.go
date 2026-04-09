@@ -225,9 +225,9 @@ func TestRunInheritsDomainFromDaemonConfig(t *testing.T) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		list := exec.Command(bin, "list", "--socket", sockPath)
-		list.Env = env
-		out, err := list.CombinedOutput()
+		routes := exec.Command(bin, "routes", "--socket", sockPath)
+		routes.Env = env
+		out, err := routes.CombinedOutput()
 		if err == nil && strings.Contains(string(out), "api.example.com") {
 			if err := run.Wait(); err != nil {
 				t.Fatalf("run wait: %v", err)
@@ -487,10 +487,10 @@ func TestStartForceDetachedSuccess(t *testing.T) {
 		t.Fatal("first daemon did not exit after start --force")
 	}
 
-	list := exec.Command(bin, "list", "--socket", sockPath)
-	list.Env = env
-	if out, err := list.CombinedOutput(); err != nil {
-		t.Fatalf("list: %v\n%s", err, out)
+	routes := exec.Command(bin, "routes", "--socket", sockPath)
+	routes.Env = env
+	if out, err := routes.CombinedOutput(); err != nil {
+		t.Fatalf("routes: %v\n%s", err, out)
 	}
 }
 
@@ -498,7 +498,7 @@ func TestServeForce(t *testing.T) {
 	bin, sockPath, env, firstWait, cleanup := startDaemonForStopTest(t)
 	defer cleanup()
 
-	// Start a second serve with --force pointing at the same socket. Use
+	// Start a second foreground daemon with --force pointing at the same socket. Use
 	// the same ephemeral-port config so we don't contend on :8080.
 	logDir := t.TempDir()
 	cfgPath := filepath.Join(logDir, "hostmux.toml")
@@ -507,7 +507,7 @@ func TestServeForce(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	second := exec.CommandContext(ctx, bin, "serve", "--config", cfgPath, "--socket", sockPath, "--force")
+	second := exec.CommandContext(ctx, bin, "start", "--foreground", "--config", cfgPath, "--socket", sockPath, "--force")
 	second.Env = env
 	second.Stdout = testWriter{t}
 	second.Stderr = testWriter{t}
@@ -530,17 +530,17 @@ func TestServeForce(t *testing.T) {
 	select {
 	case <-firstExited:
 	case <-time.After(8 * time.Second):
-		t.Fatal("first daemon did not exit after serve --force")
+		t.Fatal("first daemon did not exit after start --foreground --force")
 	}
 
 	// Second daemon's socket should come up.
 	waitForSocket(t, sockPath, 5*time.Second)
 
 	// hostmux list against the second daemon should succeed.
-	list := exec.Command(bin, "list", "--socket", sockPath)
-	list.Env = env
-	if out, err := list.CombinedOutput(); err != nil {
-		t.Fatalf("list: %v\n%s", err, out)
+	routes := exec.Command(bin, "routes", "--socket", sockPath)
+	routes.Env = env
+	if out, err := routes.CombinedOutput(); err != nil {
+		t.Fatalf("routes: %v\n%s", err, out)
 	}
 }
 
@@ -548,15 +548,15 @@ func TestServeWithoutForceContention(t *testing.T) {
 	bin, sockPath, env, _, cleanup := startDaemonForStopTest(t)
 	defer cleanup()
 
-	// Start a second serve WITHOUT --force. It should exit 0 immediately.
+	// Start a second foreground daemon WITHOUT --force. It should exit 0 immediately.
 	ctx, ctxCancel := context.WithCancel(context.Background())
 	defer ctxCancel()
-	second := exec.CommandContext(ctx, bin, "serve", "--socket", sockPath)
+	second := exec.CommandContext(ctx, bin, "start", "--foreground", "--socket", sockPath)
 	second.Env = env
 	second.Stdout = testWriter{t}
 	second.Stderr = testWriter{t}
 	if err := second.Run(); err != nil {
-		t.Fatalf("second serve exited non-zero: %v", err)
+		t.Fatalf("second start --foreground exited non-zero: %v", err)
 	}
 	// If we got here, it exited 0 as expected.
 }

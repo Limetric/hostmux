@@ -17,10 +17,10 @@ go build -o build/hostmux .
 ./build/hostmux run --domain example.com myapp -- bun run dev
 
 # Inspect the active routes.
-./build/hostmux list
+./build/hostmux routes
 
 # Print the URL for a route without starting anything.
-./build/hostmux get --domain example.com myapp
+./build/hostmux url --domain example.com myapp
 
 # Stop the daemon.
 ./build/hostmux stop
@@ -36,20 +36,20 @@ More useful commands:
 ./build/hostmux run admin.other.test -- bun run dev
 
 # Print the final URL using the same domain/prefix logic as `run`.
-./build/hostmux get --domain example.com app
-./build/hostmux get --domain example.com --prefix feature-x app
+./build/hostmux url --domain example.com app
+./build/hostmux url --domain example.com --prefix feature-x app
 
 # Replace a running daemon (e.g. after rebuilding the binary or editing config).
 ./build/hostmux start --force
 
-# Run the daemon in the foreground (old `serve` behavior).
+# Run the daemon in the foreground.
 ./build/hostmux start --foreground
 ```
 
 `hostmux run` allocates a free TCP port, sets `PORT=<port>` in the child's environment, expands bare subdomains using `--domain` (or the daemon's configured `domain`), registers the resulting hostnames with the daemon, streams the child's stdio, and automatically deregisters when the child exits — even on crash or `kill -9`.
 Without either source of domain information, bare names pass through unchanged.
 
-`hostmux get` prints `https://<hostname>` using the same `--domain`, `--prefix`, and `--no-prefix` resolution path as `hostmux run`. If `--domain` is omitted and a daemon is available, it also reuses the daemon's configured domain for bare names.
+`hostmux url` prints `https://<hostname>` using the same `--domain`, `--prefix`, and `--no-prefix` resolution path as `hostmux run`. If `--domain` is omitted and a daemon is available, it also reuses the daemon's configured domain for bare names.
 
 ## Behind cloudflared
 
@@ -94,8 +94,6 @@ upstream = "http://127.0.0.1:9000"
 Bare `hosts` entries expand against the top-level `domain`; entries that already contain a dot are treated as full hostnames and kept unchanged.
 
 Run with `hostmux start --config /path/to/hostmux.toml`. The file is hot-reloaded on save.
-
-`hostmux serve` remains available as a foreground compatibility alias.
 
 If you already have an older config using top-level `listen = "..."`
 without a `[tls]` block, that listen address still applies to the default TLS
