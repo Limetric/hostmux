@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -137,6 +138,28 @@ func TestRunCommandChildAfterFlagsWithoutDoubleDash(t *testing.T) {
 	wantArgv := []string{"bin/server"}
 	if !reflect.DeepEqual(got.Argv, wantArgv) {
 		t.Fatalf("Argv = %v, want %v", got.Argv, wantArgv)
+	}
+}
+
+func TestRunCommandRejectsPositionalsBeforeDoubleDash(t *testing.T) {
+	var stderr bytes.Buffer
+	cmd := newRunCmd()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"api", "--", "true"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want usage error")
+	}
+	var exitErr exitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("Execute() error = %T %v, want exitError", err, err)
+	}
+	if exitErr.code != 2 {
+		t.Fatalf("exit code = %d, want 2", exitErr.code)
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte("usage: hostmux run")) {
+		t.Fatalf("stderr = %q, want usage substring", stderr.String())
 	}
 }
 
