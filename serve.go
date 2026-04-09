@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -30,76 +29,54 @@ import (
 	"github.com/Limetric/hostmux/internal/tlsconfig"
 )
 
-func cmdStart(args []string) int {
-	fs := flag.NewFlagSet("start", flag.ExitOnError)
-	configPath := fs.String("config", "", "path to TOML config file (optional)")
-	socketFlag := fs.String("socket", "", "override Unix socket path")
-	forceFlag := fs.Bool("force", false, "stop any existing daemon on this socket and take over")
-	foregroundFlag := fs.Bool("foreground", false, "run in the foreground instead of daemonizing")
-	fs.Parse(args)
-
-	if *foregroundFlag {
-		return runForegroundDaemon("start", *configPath, *socketFlag, *forceFlag)
+func runStart(opts startOptions) error {
+	if opts.Foreground {
+		return runForegroundDaemon(opts)
 	}
 
-	sockPath, err := resolveServeSocketPath(*configPath, *socketFlag)
+	sockPath, err := resolveServeSocketPath(opts.ConfigPath, opts.SocketPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "hostmux start: %v\n", err)
-		return 1
+		return fmt.Errorf("hostmux start: %w", err)
 	}
 
-	spawnArgs := startForegroundArgs(*configPath, *socketFlag, *forceFlag)
-	if !*forceFlag {
+	spawnArgs := startForegroundArgs(opts.ConfigPath, opts.SocketPath, opts.Force)
+	if !opts.Force {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		err := daemon.EnsureRunning(ctx, sockPath, daemon.EnsureOpts{
 			Spawn: func() error { return daemon.SpawnDetached(spawnArgs...) },
 		})
 		cancel()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "hostmux start: could not start daemon: %v\n", err)
-			return 1
+			return fmt.Errorf("hostmux start: could not start daemon: %w", err)
 		}
-		return 0
+		return nil
 	}
 
 	if err := startForcedDetachedDaemon(sockPath, spawnArgs); err != nil {
-		fmt.Fprintf(os.Stderr, "hostmux start: could not start daemon: %v\n", err)
-		return 1
+		return fmt.Errorf("hostmux start: could not start daemon: %w", err)
 	}
-	return 0
+	return nil
 }
 
-func cmdServe(args []string) int {
-	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	configPath := fs.String("config", "", "path to TOML config file (optional)")
-	socketFlag := fs.String("socket", "", "override Unix socket path")
-	forceFlag := fs.Bool("force", false, "stop any existing daemon on this socket and take over")
-	fs.Parse(args)
-	return runForegroundDaemon("serve", *configPath, *socketFlag, *forceFlag)
-}
-
-func runForegroundDaemon(name, configPath, socketFlag string, force bool) int {
+func runForegroundDaemon(opts startOptions) error {
 	r := router.New()
 
 	// Optional config file. If not provided, look in standard locations.
-	resolvedConfigPath := resolveConfigPath(configPath)
+	resolvedConfigPath := resolveConfigPath(opts.ConfigPath)
 	cfg, err := loadOptionalConfig(resolvedConfigPath)
 	if err != nil {
-		log.Printf("config: %v", err)
-		return 1
+		return fmt.Errorf("hostmux start: config: %w", err)
 	}
 	var watcher *config.Watcher
 	if cfg != nil {
 		w, err := config.NewWatcher(resolvedConfigPath)
 		if err != nil {
-			log.Printf("config: %v", err)
-			return 1
+			return fmt.Errorf("hostmux start: config: %w", err)
 		}
 		watcher = w
 		cfg = w.Current()
 		if err := r.ReplaceSource("config", cfg.RouterEntries()); err != nil {
-			log.Printf("config: initial load rejected: %v", err)
-			return 1
+			return fmt.Errorf("hostmux start: config: initial load rejected: %w", err)
 		}
 		log.Printf("config: loaded %s (%d apps)", resolvedConfigPath, len(cfg.Apps))
 	}
@@ -124,13 +101,11 @@ func runForegroundDaemon(name, configPath, socketFlag string, force bool) int {
 	}
 	effectiveTLS, err := tlsconfig.Resolve(tlsBlock)
 	if err != nil {
-		log.Printf("tls: %v", err)
-		return 1
+		return fmt.Errorf("hostmux start: tls: %w", err)
 	}
 	generatedTLS := !pathExists(effectiveTLS.CertFile) && !pathExists(effectiveTLS.KeyFile)
 	if err := tlsconfig.EnsurePair(effectiveTLS); err != nil {
-		log.Printf("tls: %v", err)
-		return 1
+		return fmt.Errorf("hostmux start: tls: %w", err)
 	}
 	tlsCfg := &listener.TLSConfig{
 		Listen:   effectiveTLS.Listen,
@@ -140,12 +115,11 @@ func runForegroundDaemon(name, configPath, socketFlag string, force bool) int {
 
 	// Resolve socket path.
 	sockPath, err := sockpath.ResolveServe(sockpath.Options{
-		Flag:         socketFlag,
+		Flag:         opts.SocketPath,
 		ConfigSocket: configSocket,
 	})
 	if err != nil {
-		log.Printf("sockpath: %v", err)
-		return 1
+		return fmt.Errorf("hostmux start: sockpath: %w", err)
 	}
 	if dir := filepath.Dir(sockPath); dir != "" {
 		_ = os.MkdirAll(dir, 0o755)
@@ -158,15 +132,14 @@ func runForegroundDaemon(name, configPath, socketFlag string, force bool) int {
 	pidPath := sockpath.PIDFilePathFor(sockPath)
 	pidLock, contention, err := acquirePIDLock(pidPath)
 	if err != nil {
-		log.Printf("hostmux %s: pid lock: %v", name, err)
-		return 1
+		return fmt.Errorf("hostmux start: pid lock: %w", err)
 	}
 	if contention {
-		if !force {
-			log.Printf("hostmux %s: another daemon already serving %s (pid file: %s); exiting", name, sockPath, pidPath)
-			return 0
+		if !opts.Force {
+			log.Printf("hostmux start: another daemon already serving %s (pid file: %s); exiting", sockPath, pidPath)
+			return nil
 		}
-		log.Printf("hostmux %s: --force: stopping existing daemon on %s", name, sockPath)
+		log.Printf("hostmux start: --force: stopping existing daemon on %s", sockPath)
 		res, stopErr := daemonctl.Stop(daemonctl.StopOptions{
 			SockPath:        sockPath,
 			PIDPath:         pidPath,
@@ -174,21 +147,18 @@ func runForegroundDaemon(name, configPath, socketFlag string, force bool) int {
 			KillTimeout:     2 * time.Second,
 		})
 		if stopErr != nil {
-			log.Printf("hostmux %s: --force: stop failed: %v", name, stopErr)
-			return 1
+			return fmt.Errorf("hostmux start: --force: stop failed: %w", stopErr)
 		}
 		if res.NotRunning {
-			log.Printf("hostmux %s: --force: no daemon was running after all", name)
+			log.Printf("hostmux start: --force: no daemon was running after all")
 		}
 		// Retry the acquire exactly once.
 		pidLock, contention, err = acquirePIDLock(pidPath)
 		if err != nil {
-			log.Printf("hostmux %s: pid lock (retry): %v", name, err)
-			return 1
+			return fmt.Errorf("hostmux start: pid lock (retry): %w", err)
 		}
 		if contention {
-			log.Printf("hostmux %s: --force: another daemon claimed the lock during takeover", name)
-			return 1
+			return errors.New("hostmux start: --force: another daemon claimed the lock during takeover")
 		}
 	}
 	defer pidLock.Close()
@@ -198,8 +168,7 @@ func runForegroundDaemon(name, configPath, socketFlag string, force bool) int {
 	lc := listener.Config{TLS: tlsCfg}
 	servers, err := listener.Build(lc, handler)
 	if err != nil {
-		log.Printf("listener: %v", err)
-		return 1
+		return fmt.Errorf("hostmux start: listener: %w", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -216,9 +185,9 @@ func runForegroundDaemon(name, configPath, socketFlag string, force bool) int {
 			}
 		}()
 	}
-	log.Printf("hostmux %s: TLS listening on %s", name, tlsCfg.Listen)
+	log.Printf("hostmux start: TLS listening on %s", tlsCfg.Listen)
 	if generatedTLS {
-		log.Printf("hostmux %s: generated self-signed cert at %s and %s", name, tlsCfg.CertFile, tlsCfg.KeyFile)
+		log.Printf("hostmux start: generated self-signed cert at %s and %s", tlsCfg.CertFile, tlsCfg.KeyFile)
 	}
 
 	// Unix socket server.
@@ -232,11 +201,10 @@ func runForegroundDaemon(name, configPath, socketFlag string, force bool) int {
 		PlainHTTP: lc.TLS == nil,
 	})
 	if err := sockSrv.Listen(sockPath); err != nil {
-		log.Printf("sockserver: %v", err)
-		return 1
+		return fmt.Errorf("hostmux start: sockserver: %w", err)
 	}
 	go sockSrv.Serve()
-	log.Printf("hostmux %s: socket listening on %s", name, sockPath)
+	log.Printf("hostmux start: socket listening on %s", sockPath)
 
 	// Discovery file (PID file is already written under the flock above).
 	if err := sockpath.WriteDiscovery(sockPath); err != nil {
@@ -265,7 +233,7 @@ func runForegroundDaemon(name, configPath, socketFlag string, force bool) int {
 	case <-sigCh:
 	case <-ctx.Done():
 	}
-	log.Printf("hostmux %s: shutting down", name)
+	log.Printf("hostmux start: shutting down")
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
@@ -280,7 +248,7 @@ func runForegroundDaemon(name, configPath, socketFlag string, force bool) int {
 	// file, create one, and acquire its lock — all between our os.Remove
 	// and our process exit. The next daemon will simply truncate and
 	// rewrite it under its own flock.
-	return 0
+	return nil
 }
 
 func startForegroundArgs(configPath, socketFlag string, force bool) []string {
