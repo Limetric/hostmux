@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -17,7 +18,7 @@ func shortSockDir(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	return dir
 }
 
@@ -52,6 +53,15 @@ func TestEnsureRunningTimesOutWhenNoSpawn(t *testing.T) {
 func TestEnsureRunningSucceedsWhenSpawnCreatesSocket(t *testing.T) {
 	dir := shortSockDir(t)
 	path := filepath.Join(dir, "s")
+	var mu sync.Mutex
+	var listeners []net.Listener
+	t.Cleanup(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, ln := range listeners {
+			_ = ln.Close()
+		}
+	})
 	spawned := false
 	spawn := func() error {
 		spawned = true
@@ -61,6 +71,9 @@ func TestEnsureRunningSucceedsWhenSpawnCreatesSocket(t *testing.T) {
 			if err != nil {
 				return
 			}
+			mu.Lock()
+			listeners = append(listeners, ln)
+			mu.Unlock()
 			go acceptLoop(ln)
 		}()
 		return nil
@@ -81,6 +94,15 @@ func TestEnsureRunningSpawnsWhenSocketFileNotDialable(t *testing.T) {
 	if err := os.WriteFile(path, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	var mu sync.Mutex
+	var listeners []net.Listener
+	t.Cleanup(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, ln := range listeners {
+			_ = ln.Close()
+		}
+	})
 	spawned := false
 	spawn := func() error {
 		spawned = true
@@ -93,6 +115,9 @@ func TestEnsureRunningSpawnsWhenSocketFileNotDialable(t *testing.T) {
 			if err != nil {
 				return
 			}
+			mu.Lock()
+			listeners = append(listeners, ln)
+			mu.Unlock()
 			go acceptLoop(ln)
 		}()
 		return nil

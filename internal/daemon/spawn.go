@@ -18,7 +18,9 @@ import (
 )
 
 // DefaultEnsureTimeout is the suggested deadline for [EnsureRunning] when using
-// the real detached spawn (TLS setup and disk can exceed a couple of seconds).
+// the real detached spawn. The child runs full daemon init (TLS, cert generation,
+// listeners, control socket); keep this comfortably above slow disk or CPU, and
+// avoid shrinking it for micro-optimization — dial readiness alone is usually fast.
 const DefaultEnsureTimeout = 8 * time.Second
 
 // EnsureOpts allows tests to inject a fake Spawn function.
@@ -31,8 +33,12 @@ type EnsureOpts struct {
 // EnsureRunning blocks until a TCP-style connect to the Unix socket at sockPath
 // succeeds (daemon is listening), or ctx expires. If the socket is not ready on
 // entry, it calls opts.Spawn (or the real fork helper) once and then polls.
+//
+// If sockPath is occupied by a stale socket file that still blocks bind(2), the
+// spawned daemon may fail to listen (see logs); this path does not unlink or
+// replace it — use `hostmux start --force` or remove the path manually.
 func EnsureRunning(ctx context.Context, sockPath string, opts EnsureOpts) error {
-	if unixDialOK(sockPath) {
+	if unixDialOK(ctx, sockPath) {
 		return nil
 	}
 	spawn := opts.Spawn
@@ -45,7 +51,7 @@ func EnsureRunning(ctx context.Context, sockPath string, opts EnsureOpts) error 
 	tick := time.NewTicker(20 * time.Millisecond)
 	defer tick.Stop()
 	for {
-		if unixDialOK(sockPath) {
+		if unixDialOK(ctx, sockPath) {
 			return nil
 		}
 		select {
@@ -56,8 +62,9 @@ func EnsureRunning(ctx context.Context, sockPath string, opts EnsureOpts) error 
 	}
 }
 
-func unixDialOK(sockPath string) bool {
-	conn, err := net.DialTimeout("unix", sockPath, 100*time.Millisecond)
+func unixDialOK(ctx context.Context, sockPath string) bool {
+	d := net.Dialer{Timeout: 100 * time.Millisecond}
+	conn, err := d.DialContext(ctx, "unix", sockPath)
 	if err != nil {
 		return false
 	}
