@@ -44,7 +44,7 @@ func TestRootHelpShowsRedesignedCommands(t *testing.T) {
 		"stop",
 		"version",
 		"hostmux run --name api --name admin -- COMMAND [ARGS...]",
-		"hostmux url --name api",
+		"hostmux url api",
 		"hostmux start --foreground",
 	} {
 		if !strings.Contains(help, want) {
@@ -95,11 +95,6 @@ func TestExecuteUsageAndDispatchErrorsExitWithCode2(t *testing.T) {
 			name:       "run rejects positional host arg",
 			args:       []string{"hostmux", "run", "api", "--", "bin/server"},
 			wantStderr: "usage: hostmux run [--name NAME]...",
-		},
-		{
-			name:       "url rejects positional host arg",
-			args:       []string{"hostmux", "url", "api"},
-			wantStderr: "usage: hostmux url [--name NAME]...",
 		},
 		{
 			name:       "unknown subcommand",

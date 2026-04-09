@@ -9,22 +9,16 @@ func newURLCmd() *cobra.Command {
 	var names []string
 
 	cmd := &cobra.Command{
-		Use:   "url [--name NAME]...",
+		Use:   "url [--name NAME]... [NAME]...",
 		Short: "Print the public URL for a host",
-		Args: func(cmd *cobra.Command, args []string) error {
-			if len(args) != 0 {
-				return usageErrorf("usage: hostmux url [--name NAME]... [--socket PATH] [--domain DOMAIN] [--prefix NAME | --no-prefix]")
-			}
-			return nil
-		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.Names = append([]string(nil), names...)
+			opts.Names = append(append([]string(nil), names...), args...)
 			opts.Writer = cmd.OutOrStdout()
 			return urlRunner(opts)
 		},
 	}
 
-	cmd.Flags().StringArrayVar(&names, "name", nil, "repeatable hostname to print")
+	cmd.Flags().StringArrayVar(&names, "name", nil, "repeatable hostname to print (same as positional NAME)")
 	cmd.Flags().StringVar(&opts.SocketPath, "socket", "", "override Unix socket path for daemon domain lookup")
 	cmd.Flags().StringVar(&opts.Domain, "domain", "", "expand bare subdomains using this base domain")
 	cmd.Flags().StringVar(&opts.Prefix, "prefix", "", "explicit hostname prefix (overrides worktree detection)")
