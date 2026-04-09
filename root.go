@@ -55,7 +55,7 @@ func newRootCmd() *cobra.Command {
 		Use:           "hostmux",
 		Short:         "Host-routed reverse proxy",
 		Long:          "hostmux manages host-routed local development routes.",
-		Example:       "  hostmux start\n  hostmux start --foreground\n  hostmux run HOSTS -- COMMAND [ARGS...]\n  hostmux url HOST\n  hostmux routes\n  hostmux stop\n  hostmux version",
+		Example:       "  hostmux start\n  hostmux start --foreground\n  hostmux run --name api --name admin -- COMMAND [ARGS...]\n  hostmux url --name api\n  hostmux routes\n  hostmux stop\n  hostmux version",
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {

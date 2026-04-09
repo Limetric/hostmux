@@ -21,22 +21,28 @@ type runOptions struct {
 	Domain     string
 	Prefix     string
 	NoPrefix   bool
-	HostsArg   string
+	Names      []string
 	Argv       []string
 }
 
 func runCommand(opts runOptions) error {
-	if opts.HostsArg == "" || len(opts.Argv) == 0 {
-		return usageErrorf("usage: hostmux run HOSTS [--socket PATH] [--domain DOMAIN] [--prefix NAME | --no-prefix] -- COMMAND [ARGS...]")
+	if len(opts.Argv) == 0 {
+		return usageErrorf("usage: hostmux run [--name NAME]... [--socket PATH] [--domain DOMAIN] [--prefix NAME | --no-prefix] -- COMMAND [ARGS...]")
 	}
 
-	hosts := splitHosts(opts.HostsArg)
-	if len(hosts) == 0 {
-		fmt.Fprintln(os.Stderr, "hostmux run: HOSTS is empty")
-		return exitError{code: 2}
+	if err := validateExplicitNames(opts.Names); err != nil {
+		fmt.Fprintf(os.Stderr, "hostmux run: %v\n", err)
+		return exitError{code: 1}
 	}
 
-	hosts, err := resolveRequestedHosts(hosts, hostResolveOptions{
+	names, err := resolveRequestedNames(opts.Names)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hostmux run: %v\n", err)
+		return exitError{code: 1}
+	}
+
+	hosts := names
+	hosts, err = resolveRequestedHosts(hosts, hostResolveOptions{
 		Domain:   opts.Domain,
 		Prefix:   opts.Prefix,
 		NoPrefix: opts.NoPrefix,
@@ -136,6 +142,15 @@ func runCommand(opts runOptions) error {
 	}
 	if code != 0 {
 		return exitError{code: code}
+	}
+	return nil
+}
+
+func validateExplicitNames(names []string) error {
+	for _, name := range names {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("--name must be non-empty")
+		}
 	}
 	return nil
 }

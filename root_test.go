@@ -43,7 +43,8 @@ func TestRootHelpShowsRedesignedCommands(t *testing.T) {
 		"routes",
 		"stop",
 		"version",
-		"hostmux run HOSTS -- COMMAND [ARGS...]",
+		"hostmux run --name api --name admin -- COMMAND [ARGS...]",
+		"hostmux url --name api",
 		"hostmux start --foreground",
 	} {
 		if !strings.Contains(help, want) {
@@ -86,14 +87,19 @@ func TestExecuteUsageAndDispatchErrorsExitWithCode2(t *testing.T) {
 		wantStderr string
 	}{
 		{
-			name:       "url missing host",
-			args:       []string{"hostmux", "url"},
-			wantStderr: "usage: hostmux url HOST",
-		},
-		{
 			name:       "run missing command",
 			args:       []string{"hostmux", "run"},
-			wantStderr: "usage: hostmux run HOSTS",
+			wantStderr: "usage: hostmux run [--name NAME]...",
+		},
+		{
+			name:       "run rejects positional host arg",
+			args:       []string{"hostmux", "run", "api", "--", "bin/server"},
+			wantStderr: "usage: hostmux run [--name NAME]...",
+		},
+		{
+			name:       "url rejects positional host arg",
+			args:       []string{"hostmux", "url", "api"},
+			wantStderr: "usage: hostmux url [--name NAME]...",
 		},
 		{
 			name:       "unknown subcommand",
@@ -232,11 +238,11 @@ func TestStopCommandPassesSocketFlagToRunner(t *testing.T) {
 }
 
 func TestRunCommandRequiresDashSeparatedChildCommand(t *testing.T) {
-	stdout, stderr, code := runExecuteAndCapture(t, []string{"hostmux", "run", "api", "bin/server"})
+	stdout, stderr, code := runExecuteAndCapture(t, []string{"hostmux", "run", "--name", "api", "bin/server"})
 	if code != 2 {
 		t.Fatalf("execute() code = %d, stdout = %q, stderr = %q", code, stdout, stderr)
 	}
-	if !bytes.Contains([]byte(stderr), []byte("usage: hostmux run HOSTS [--socket PATH] [--domain DOMAIN] [--prefix NAME | --no-prefix] -- COMMAND [ARGS...]")) {
+	if !bytes.Contains([]byte(stderr), []byte("usage: hostmux run [--name NAME]... [--socket PATH] [--domain DOMAIN] [--prefix NAME | --no-prefix] -- COMMAND [ARGS...]")) {
 		t.Fatalf("stderr = %q, want run usage", stderr)
 	}
 }

@@ -14,13 +14,13 @@ go build -o build/hostmux .
 ./build/hostmux start
 
 # In another terminal, run a dev server and register a subdomain for it.
-./build/hostmux run --domain example.com myapp -- bun run dev
+./build/hostmux run --domain example.com --name myapp -- bun run dev
 
 # Inspect the active routes.
 ./build/hostmux routes
 
 # Print the URL for a route without starting anything.
-./build/hostmux url --domain example.com myapp
+./build/hostmux url --domain example.com --name myapp
 
 # Stop the daemon.
 ./build/hostmux stop
@@ -30,14 +30,18 @@ More useful commands:
 
 ```sh
 # Multiple subdomains for the same upstream.
-./build/hostmux run --domain example.com app,admin -- bun run dev
+./build/hostmux run --domain example.com --name app --name admin -- bun run dev
 
-# Full hostnames still work unchanged.
-./build/hostmux run admin.other.test -- bun run dev
+# Omit --name to infer from the nearest ancestor package.json name.
+./build/hostmux run --domain example.com -- bun run dev
+
+# Full hostnames skip domain expansion, but still use the normal prefix logic unless --no-prefix is set.
+./build/hostmux run --name admin.other.test -- bun run dev
 
 # Print the final URL using the same domain/prefix logic as `run`.
-./build/hostmux url --domain example.com app
-./build/hostmux url --domain example.com --prefix feature-x app
+./build/hostmux url --domain example.com --name app
+./build/hostmux url --domain example.com --prefix feature-x --name app
+./build/hostmux url --domain example.com --name app --name admin
 
 # Replace a running daemon (e.g. after rebuilding the binary or editing config).
 ./build/hostmux start --force
@@ -46,10 +50,23 @@ More useful commands:
 ./build/hostmux start --foreground
 ```
 
-`hostmux run` allocates a free TCP port, sets `PORT=<port>` in the child's environment, expands bare subdomains using `--domain` (or the daemon's configured `domain`), registers the resulting hostnames with the daemon, streams the child's stdio, and automatically deregisters when the child exits — even on crash or `kill -9`.
-Without either source of domain information, bare names pass through unchanged.
+`hostmux run` allocates a free TCP port, sets `PORT=<port>` in the child's environment, expands bare subdomains using `--domain` (or the daemon's configured `domain`), registers the resulting hostnames with the daemon, streams the child's stdio, and automatically deregisters when the child exits - even on crash or `kill -9`.
 
-`hostmux url` prints `https://<hostname>` using the same `--domain`, `--prefix`, and `--no-prefix` resolution path as `hostmux run`. If `--domain` is omitted and a daemon is available, it also reuses the daemon's configured domain for bare names.
+Pass one or more `--name` flags to register explicit names:
+
+```sh
+./build/hostmux run --domain example.com --name app --name admin -- bun run dev
+```
+
+If you omit `--name`, `hostmux run` infers one name in this order:
+
+1. The nearest ancestor `package.json` `name`, walking upward from the current working directory until the git repo root.
+2. The git repo root directory basename.
+3. The current working directory basename.
+
+Inferred names are normalized to lowercase DNS-safe labels. Without either `--domain` or a daemon-configured domain, bare names pass through unchanged.
+
+`hostmux url` prints one `https://<hostname>` line per requested name using the same `--name`, `--domain`, `--prefix`, and `--no-prefix` resolution path as `hostmux run`. If `--name` is omitted, it uses the same inference order. If `--domain` is omitted and a daemon is available, it also reuses the daemon's configured domain for bare names.
 
 ## Behind cloudflared
 
@@ -105,8 +122,8 @@ listener.
 
 | cwd | command | actual hostnames |
 |---|---|---|
-| `~/proj/main` (primary) | `hostmux run --domain example.com myapp -- ...` | `myapp.example.com` |
-| `~/proj/feature-x` (worktree) | `hostmux run --domain example.com myapp -- ...` | `feature-x-myapp.example.com` |
+| `~/proj/main` (primary) | `hostmux run --domain example.com --name myapp -- ...` | `myapp.example.com` |
+| `~/proj/feature-x` (worktree) | `hostmux run --domain example.com --name myapp -- ...` | `feature-x-myapp.example.com` |
 
 Override with `--prefix NAME` or disable with `--no-prefix`.
 
