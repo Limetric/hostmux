@@ -14,17 +14,21 @@ type urlOptions struct {
 	Domain     string
 	Prefix     string
 	NoPrefix   bool
-	HostArg    string
+	Names      []string
 	Writer     io.Writer
 }
 
 func runURL(opts urlOptions) error {
-	hosts := splitHosts(opts.HostArg)
-	if len(hosts) != 1 {
-		return exitError{code: 2, text: "hostmux url: HOST must be a single hostname"}
+	if err := validateExplicitNames(opts.Names); err != nil {
+		return exitError{code: 2, text: fmt.Sprintf("hostmux url: %v", err)}
 	}
 
-	hosts, err := resolveRequestedHosts(hosts, hostResolveOptions{
+	hosts, err := resolveRequestedNames(opts.Names)
+	if err != nil {
+		return exitError{code: 1, text: fmt.Sprintf("hostmux url: %v", err)}
+	}
+
+	hosts, err = resolveRequestedHosts(hosts, hostResolveOptions{
 		Domain:   opts.Domain,
 		Prefix:   opts.Prefix,
 		NoPrefix: opts.NoPrefix,
@@ -52,6 +56,10 @@ func runURL(opts urlOptions) error {
 		writer = os.Stdout
 	}
 
-	_, err = fmt.Fprintf(writer, "https://%s\n", hosts[0])
-	return err
+	for _, host := range hosts {
+		if _, err := fmt.Fprintf(writer, "https://%s\n", host); err != nil {
+			return err
+		}
+	}
+	return nil
 }

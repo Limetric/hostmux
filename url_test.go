@@ -14,8 +14,8 @@ import (
 
 func TestURLCommandPrintsExpandedURLWithDomainFlag(t *testing.T) {
 	stdout, stderr, err := runURLAndCapture(t, urlOptions{
-		Domain:  "example.com",
-		HostArg: "backend",
+		Domain: "example.com",
+		Names:  []string{"backend"},
 	})
 	if err != nil {
 		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)
@@ -27,7 +27,7 @@ func TestURLCommandPrintsExpandedURLWithDomainFlag(t *testing.T) {
 
 func TestURLCommandUsesCobraOutputWriter(t *testing.T) {
 	cmd := newURLCmd()
-	cmd.SetArgs([]string{"--domain", "example.com", "--no-prefix", "backend"})
+	cmd.SetArgs([]string{"--domain", "example.com", "--no-prefix", "--name", "backend"})
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -45,11 +45,106 @@ func TestURLCommandUsesCobraOutputWriter(t *testing.T) {
 	}
 }
 
+func TestURLCommandInfersNameFromPackageJSONWhenNameOmitted(t *testing.T) {
+	oldWD := mustChdirTempDir(t)
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWD); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	})
+	mustWriteFile(t, filepath.Join(".", "package.json"), `{"name":"@scope/Web App"}`)
+
+	cmd := newURLCmd()
+	cmd.SetArgs([]string{"--domain", "example.com", "--no-prefix"})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if got, want := stdout.String(), "https://web-app.example.com\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty stderr", stderr.String())
+	}
+}
+
+func TestURLCommandPrintsOneLinePerRepeatedNameFlag(t *testing.T) {
+	cmd := newURLCmd()
+	cmd.SetArgs([]string{"--domain", "example.com", "--no-prefix", "--name", "backend", "--name", "admin"})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if got, want := stdout.String(), "https://backend.example.com\nhttps://admin.example.com\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty stderr", stderr.String())
+	}
+}
+
+func TestURLCommandRejectsInvalidExplicitName(t *testing.T) {
+	_, stderr, err := runURLAndCapture(t, urlOptions{Names: []string{"My App"}})
+	if err == nil {
+		t.Fatal("runURL error = nil, want error")
+	}
+	if got := err.Error(); !strings.Contains(got, "valid bare label, hostname, or IP literal") {
+		t.Fatalf("error = %q, stderr = %q", got, stderr)
+	}
+}
+
+func TestRunURLSupportsMultipleExplicitNames(t *testing.T) {
+	stdout, stderr, err := runURLAndCapture(t, urlOptions{
+		Domain: "example.com",
+		Names:  []string{"backend", "admin"},
+	})
+	if err != nil {
+		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)
+	}
+	if got, want := stdout, "https://backend.example.com\nhttps://admin.example.com\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestURLHelpShowsRepeatedNameUsage(t *testing.T) {
+	cmd := newURLCmd()
+	cmd.SetArgs([]string{"--help"})
+
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stdout)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	help := stdout.String()
+	for _, want := range []string{
+		"url [--name NAME]...",
+		"Print the public URL for a host",
+		"repeatable hostname to print",
+	} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("help output missing %q\n%s", want, help)
+		}
+	}
+}
+
 func TestURLCommandAppliesPrefixBeforeDomainExpansion(t *testing.T) {
 	stdout, stderr, err := runURLAndCapture(t, urlOptions{
-		Domain:  "example.com",
-		Prefix:  "feature-x",
-		HostArg: "backend",
+		Domain: "example.com",
+		Prefix: "feature-x",
+		Names:  []string{"backend"},
 	})
 	if err != nil {
 		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)
@@ -63,7 +158,7 @@ func TestURLCommandNoPrefixFlagLeavesHostUnprefixed(t *testing.T) {
 	stdout, stderr, err := runURLAndCapture(t, urlOptions{
 		Domain:   "example.com",
 		NoPrefix: true,
-		HostArg:  "backend",
+		Names:    []string{"backend"},
 	})
 	if err != nil {
 		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)
@@ -110,7 +205,7 @@ func TestURLCommandUsesDaemonDomainForBareHost(t *testing.T) {
 
 	stdout, stderr, err := runURLAndCapture(t, urlOptions{
 		SocketPath: sockPath,
-		HostArg:    "backend",
+		Names:      []string{"backend"},
 	})
 	if err != nil {
 		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)
@@ -132,7 +227,7 @@ func TestURLCommandUsesDaemonDomainForBareHost(t *testing.T) {
 func TestURLCommandPassesThroughBareHostWhenNoDomainAvailable(t *testing.T) {
 	stdout, stderr, err := runURLAndCapture(t, urlOptions{
 		SocketPath: filepath.Join(t.TempDir(), "missing.sock"),
-		HostArg:    "backend",
+		Names:      []string{"backend"},
 	})
 	if err != nil {
 		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)
@@ -147,8 +242,8 @@ func TestURLCommandPassesThroughBareHostWhenNoDomainAvailable(t *testing.T) {
 
 func TestURLCommandPreservesFullHostnameWithDomainFlag(t *testing.T) {
 	stdout, stderr, err := runURLAndCapture(t, urlOptions{
-		Domain:  "example.com",
-		HostArg: "admin.other.test",
+		Domain: "example.com",
+		Names:  []string{"admin.other.test"},
 	})
 	if err != nil {
 		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)
@@ -162,7 +257,7 @@ func TestURLCommandDomainFlagTakesPriorityOverDaemonLookup(t *testing.T) {
 	stdout, stderr, err := runURLAndCapture(t, urlOptions{
 		SocketPath: filepath.Join(t.TempDir(), "missing.sock"),
 		Domain:     "example.com",
-		HostArg:    "backend",
+		Names:      []string{"backend"},
 	})
 	if err != nil {
 		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)
@@ -175,29 +270,23 @@ func TestURLCommandDomainFlagTakesPriorityOverDaemonLookup(t *testing.T) {
 	}
 }
 
-func TestURLCommandRejectsMultipleHosts(t *testing.T) {
-	_, stderr, err := runURLAndCapture(t, urlOptions{HostArg: "backend,admin"})
-	if err == nil {
-		t.Fatal("runURL error = nil, want usage error")
+func TestURLCommandPrintsMultipleHostsFromNames(t *testing.T) {
+	stdout, stderr, err := runURLAndCapture(t, urlOptions{
+		Domain: "example.com",
+		Names:  []string{"backend", "admin"},
+	})
+	if err != nil {
+		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)
 	}
-	if !strings.Contains(err.Error(), "single hostname") {
-		t.Fatalf("error = %v, stderr = %q", err, stderr)
-	}
-	if exit, ok := err.(exitError); !ok || exit.code != 2 {
-		t.Fatalf("error = %#v, want exitError{code: 2}", err)
+	if got, want := stdout, "https://backend.example.com\nhttps://admin.example.com\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
 
 func runURLAndCapture(t *testing.T, opts urlOptions) (string, string, error) {
 	t.Helper()
 
-	oldWD, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(t.TempDir()); err != nil {
-		t.Fatal(err)
-	}
+	oldWD := mustChdirTempDir(t)
 	t.Cleanup(func() {
 		if err := os.Chdir(oldWD); err != nil {
 			t.Fatalf("restore cwd: %v", err)
@@ -208,9 +297,22 @@ func runURLAndCapture(t *testing.T, opts urlOptions) (string, string, error) {
 	opts.Writer = &stdout
 	stderr, restoreStderr := captureRootFileOutput(t, &os.Stderr)
 
-	err = runURL(opts)
+	err := runURL(opts)
 
 	restoreStderr()
 
 	return stdout.String(), stderr.String(), err
+}
+
+func mustChdirTempDir(t *testing.T) string {
+	t.Helper()
+
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	return oldWD
 }

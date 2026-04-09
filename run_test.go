@@ -14,7 +14,7 @@ import (
 	"github.com/Limetric/hostmux/internal/sockproto"
 )
 
-func TestRunCommandSeparatesHostsAndChildArgs(t *testing.T) {
+func TestRunCommandSeparatesNamesAndChildArgs(t *testing.T) {
 	oldRunner := runRunner
 	t.Cleanup(func() { runRunner = oldRunner })
 
@@ -28,8 +28,9 @@ func TestRunCommandSeparatesHostsAndChildArgs(t *testing.T) {
 	cmd.SetArgs([]string{
 		"--socket", "/tmp/hostmux.sock",
 		"--domain", "example.com",
+		"--name", "backend",
+		"--name", "admin",
 		"--prefix", "feature-x",
-		"backend,admin",
 		"--",
 		"bin/server",
 		"--listen",
@@ -49,8 +50,8 @@ func TestRunCommandSeparatesHostsAndChildArgs(t *testing.T) {
 	if got.Prefix != "feature-x" {
 		t.Fatalf("Prefix = %q, want %q", got.Prefix, "feature-x")
 	}
-	if got.HostsArg != "backend,admin" {
-		t.Fatalf("HostsArg = %q, want %q", got.HostsArg, "backend,admin")
+	if want := []string{"backend", "admin"}; !reflect.DeepEqual(got.Names, want) {
+		t.Fatalf("Names = %v, want %v", got.Names, want)
 	}
 	wantArgv := []string{"bin/server", "--listen", ":8080"}
 	if !reflect.DeepEqual(got.Argv, wantArgv) {
@@ -72,7 +73,7 @@ func TestRunCommandDelegatesToRunner(t *testing.T) {
 	cmd.SetArgs([]string{
 		"--socket", "/tmp/hostmux.sock",
 		"--domain", "example.com",
-		"api",
+		"--name", "api",
 		"--",
 		"bin/server",
 	})
@@ -85,12 +86,63 @@ func TestRunCommandDelegatesToRunner(t *testing.T) {
 	if got.Domain != "example.com" {
 		t.Fatalf("Domain = %q, want %q", got.Domain, "example.com")
 	}
-	if got.HostsArg != "api" {
-		t.Fatalf("HostsArg = %q, want %q", got.HostsArg, "api")
+	if want := []string{"api"}; !reflect.DeepEqual(got.Names, want) {
+		t.Fatalf("Names = %v, want %v", got.Names, want)
 	}
 	wantArgv := []string{"bin/server"}
 	if !reflect.DeepEqual(got.Argv, wantArgv) {
 		t.Fatalf("Argv = %v, want %v", got.Argv, wantArgv)
+	}
+}
+
+func TestRunCommandAllowsMissingNamesAtParserLevel(t *testing.T) {
+	oldRunner := runRunner
+	t.Cleanup(func() { runRunner = oldRunner })
+
+	called := false
+	runRunner = func(opts runOptions) error {
+		called = true
+		if len(opts.Names) != 0 {
+			t.Fatalf("Names = %v, want empty", opts.Names)
+		}
+		wantArgv := []string{"bin/server"}
+		if !reflect.DeepEqual(opts.Argv, wantArgv) {
+			t.Fatalf("Argv = %v, want %v", opts.Argv, wantArgv)
+		}
+		return nil
+	}
+
+	cmd := newRunCmd()
+	cmd.SetArgs([]string{"--", "bin/server"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !called {
+		t.Fatal("runRunner was not called")
+	}
+}
+
+func TestRunCommandPreservesEmptyExplicitNamesAtParserLevel(t *testing.T) {
+	oldRunner := runRunner
+	t.Cleanup(func() { runRunner = oldRunner })
+
+	called := false
+	runRunner = func(opts runOptions) error {
+		called = true
+		want := []string{"", "admin"}
+		if !reflect.DeepEqual(opts.Names, want) {
+			t.Fatalf("Names = %v, want %v", opts.Names, want)
+		}
+		return nil
+	}
+
+	cmd := newRunCmd()
+	cmd.SetArgs([]string{"--name=", "--name", "admin", "--", "bin/server"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !called {
+		t.Fatal("runRunner was not called")
 	}
 }
 
@@ -161,7 +213,7 @@ func TestRunCommandUsesDashBetweenPrefixAndHost(t *testing.T) {
 	cmd.SetArgs([]string{
 		"--socket", sockPath,
 		"--prefix", "feature-x",
-		"myapp.test",
+		"--name", "myapp.test",
 		"--",
 		"/usr/bin/true",
 	})
@@ -194,7 +246,7 @@ func TestRunCommandExpandsBareHostWithDomainFlag(t *testing.T) {
 		domain: "ignored.test",
 	}, []string{
 		"--domain", "example.com",
-		"api",
+		"--name", "api",
 		"--",
 		"/usr/bin/true",
 	})
@@ -212,7 +264,7 @@ func TestRunCommandPreservesFullHostnameWithDomainFlag(t *testing.T) {
 		domain: "ignored.test",
 	}, []string{
 		"--domain", "example.com",
-		"admin.other.test",
+		"--name", "admin.other.test",
 		"--",
 		"/usr/bin/true",
 	})
@@ -231,7 +283,7 @@ func TestRunCommandAppliesPrefixBeforeDomainExpansion(t *testing.T) {
 	}, []string{
 		"--domain", "example.com",
 		"--prefix", "feature-x",
-		"api",
+		"--name", "api",
 		"--",
 		"/usr/bin/true",
 	})
@@ -248,7 +300,7 @@ func TestRunCommandUsesDaemonDomainForBareHost(t *testing.T) {
 	hosts, code, stderr := runRunCommandAndCapture(t, runServerScript{
 		domain: "example.com",
 	}, []string{
-		"api",
+		"--name", "api",
 		"--",
 		"/usr/bin/true",
 	})
@@ -261,9 +313,132 @@ func TestRunCommandUsesDaemonDomainForBareHost(t *testing.T) {
 	}
 }
 
+func TestRunCommandInfersNameFromPackageJSONWhenFlagOmitted(t *testing.T) {
+	wd := t.TempDir()
+	mustWriteFile(t, filepath.Join(wd, "package.json"), `{"name":"@scope/Web App"}`)
+
+	hosts, code, stderr := runRunCommandAndCaptureInDir(t, wd, runServerScript{
+		domain: "ignored.test",
+	}, []string{
+		"--domain", "example.com",
+		"--",
+		"/usr/bin/true",
+	})
+	if code != 0 {
+		t.Fatalf("run command exit code = %d, stderr = %q", code, stderr)
+	}
+	want := []string{"web-app.example.com"}
+	if !reflect.DeepEqual(hosts, want) {
+		t.Fatalf("registered hosts = %v, want %v", hosts, want)
+	}
+}
+
+func TestRunCommandRegistersMultipleExplicitNamesInOrder(t *testing.T) {
+	hosts, code, stderr := runRunCommandAndCapture(t, runServerScript{
+		domain: "ignored.test",
+	}, []string{
+		"--domain", "example.com",
+		"--name", "backend",
+		"--name", "admin",
+		"--",
+		"/usr/bin/true",
+	})
+	if code != 0 {
+		t.Fatalf("run command exit code = %d, stderr = %q", code, stderr)
+	}
+	want := []string{"backend.example.com", "admin.example.com"}
+	if !reflect.DeepEqual(hosts, want) {
+		t.Fatalf("registered hosts = %v, want %v", hosts, want)
+	}
+}
+
+func TestRunCommandUsesFirstResolvedHostForHostmuxURLWhenMultipleNamesProvided(t *testing.T) {
+	_, code, stderr := runRunCommandAndCapture(t, runServerScript{
+		domain: "ignored.test",
+	}, []string{
+		"--domain", "example.com",
+		"--name", "backend",
+		"--name", "admin",
+		"--",
+		"sh", "-c", `test "$HOSTMUX_URL" = "https://backend.example.com"`,
+	})
+	if code != 0 {
+		t.Fatalf("run command exit code = %d, stderr = %q", code, stderr)
+	}
+}
+
+func TestRunCommandRejectsEmptyExplicitName(t *testing.T) {
+	hosts, code, stderr := runRunCommandAndCapture(t, runServerScript{}, []string{
+		"--name=",
+		"--",
+		"/usr/bin/true",
+	})
+	if code == 0 {
+		t.Fatalf("run command exit code = %d, want non-zero", code)
+	}
+	if len(hosts) != 0 {
+		t.Fatalf("registered hosts = %v, want none", hosts)
+	}
+	if got := stderr; !bytes.Contains([]byte(got), []byte("--name must be non-empty")) {
+		t.Fatalf("stderr = %q", stderr)
+	}
+}
+
+func TestRunCommandRejectsMixedValidAndEmptyExplicitNames(t *testing.T) {
+	hosts, code, stderr := runRunCommandAndCapture(t, runServerScript{}, []string{
+		"--name", "backend",
+		"--name=",
+		"--",
+		"/usr/bin/true",
+	})
+	if code == 0 {
+		t.Fatalf("run command exit code = %d, want non-zero", code)
+	}
+	if len(hosts) != 0 {
+		t.Fatalf("registered hosts = %v, want none", hosts)
+	}
+	if got := stderr; !bytes.Contains([]byte(got), []byte("--name must be non-empty")) {
+		t.Fatalf("stderr = %q", stderr)
+	}
+}
+
+func TestRunCommandRejectsInvalidExplicitName(t *testing.T) {
+	hosts, code, stderr := runRunCommandAndCapture(t, runServerScript{}, []string{
+		"--name", "My App",
+		"--",
+		"/usr/bin/true",
+	})
+	if code == 0 {
+		t.Fatalf("run command exit code = %d, want non-zero", code)
+	}
+	if len(hosts) != 0 {
+		t.Fatalf("registered hosts = %v, want none", hosts)
+	}
+	if got := stderr; !bytes.Contains([]byte(got), []byte("valid bare label, hostname, or IP literal")) {
+		t.Fatalf("stderr = %q", stderr)
+	}
+}
+
+func TestRunCommandRejectsExplicitNameWithSurroundingSpaces(t *testing.T) {
+	hosts, code, stderr := runRunCommandAndCapture(t, runServerScript{}, []string{
+		"--name", " api ",
+		"--",
+		"/usr/bin/true",
+	})
+	if code == 0 {
+		t.Fatalf("run command exit code = %d, want non-zero", code)
+	}
+	if len(hosts) != 0 {
+		t.Fatalf("registered hosts = %v, want none", hosts)
+	}
+	if got := stderr; !bytes.Contains([]byte(got), []byte("valid bare label, hostname, or IP literal")) {
+		t.Fatalf("stderr = %q", stderr)
+	}
+}
+
 func TestRunCommandPassesThroughBareHostWhenNoDomainAvailable(t *testing.T) {
 	hosts, code, stderr := runRunCommandAndCapture(t, runServerScript{}, []string{
-		"api",
+		"--name", "api",
 		"--",
 		"/usr/bin/true",
 	})
@@ -281,7 +456,7 @@ func TestRunCommandFallsBackWhenDaemonDoesNotSupportInfo(t *testing.T) {
 		infoOk:    false,
 		infoError: "unsupported operation",
 	}, []string{
-		"api",
+		"--name", "api",
 		"--",
 		"sh", "-c", `[ -z "${HOSTMUX_URL}" ]`,
 	})
@@ -312,7 +487,7 @@ func TestRunCommandHostmuxURLSchemeMatchesDaemonEdge(t *testing.T) {
 				domain:    "example.com",
 				plainEdge: tt.plainEdge,
 			}, []string{
-				"api",
+				"--name", "api",
 				"--",
 				"sh", "-c", `test "$HOSTMUX_URL" = "` + tt.wantURL + `"`,
 			})
@@ -334,12 +509,17 @@ type runServerScript struct {
 
 func runRunCommandAndCapture(t *testing.T, script runServerScript, args []string) ([]string, int, string) {
 	t.Helper()
+	return runRunCommandAndCaptureInDir(t, t.TempDir(), script, args)
+}
+
+func runRunCommandAndCaptureInDir(t *testing.T, wd string, script runServerScript, args []string) ([]string, int, string) {
+	t.Helper()
 
 	oldWD, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chdir(t.TempDir()); err != nil {
+	if err := os.Chdir(wd); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {

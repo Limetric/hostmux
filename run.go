@@ -21,22 +21,27 @@ type runOptions struct {
 	Domain     string
 	Prefix     string
 	NoPrefix   bool
-	HostsArg   string
+	Names      []string
 	Argv       []string
 }
 
 func runCommand(opts runOptions) error {
-	if opts.HostsArg == "" || len(opts.Argv) == 0 {
-		return usageErrorf("usage: hostmux run HOSTS [--socket PATH] [--domain DOMAIN] [--prefix NAME | --no-prefix] -- COMMAND [ARGS...]")
+	if len(opts.Argv) == 0 {
+		return usageErrorf("usage: hostmux run [--name NAME]... [--socket PATH] [--domain DOMAIN] [--prefix NAME | --no-prefix] -- COMMAND [ARGS...]")
 	}
 
-	hosts := splitHosts(opts.HostsArg)
-	if len(hosts) == 0 {
-		fmt.Fprintln(os.Stderr, "hostmux run: HOSTS is empty")
+	if err := validateExplicitNames(opts.Names); err != nil {
+		fmt.Fprintf(os.Stderr, "hostmux run: %v\n", err)
 		return exitError{code: 2}
 	}
 
-	hosts, err := resolveRequestedHosts(hosts, hostResolveOptions{
+	names, err := resolveRequestedNames(opts.Names)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hostmux run: %v\n", err)
+		return exitError{code: 1}
+	}
+
+	hosts, err := resolveRequestedHosts(names, hostResolveOptions{
 		Domain:   opts.Domain,
 		Prefix:   opts.Prefix,
 		NoPrefix: opts.NoPrefix,
@@ -140,16 +145,22 @@ func runCommand(opts runOptions) error {
 	return nil
 }
 
-func splitHosts(s string) []string {
-	parts := strings.Split(s, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			out = append(out, p)
+func validateExplicitNames(names []string) error {
+	for _, name := range names {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("--name must be non-empty")
+		}
+		for _, r := range name {
+			isAlphaNum := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
+			switch {
+			case isAlphaNum:
+			case r == '-' || r == '.' || r == ':' || r == '[' || r == ']':
+			default:
+				return fmt.Errorf("--name must be a valid bare label, hostname, or IP literal")
+			}
 		}
 	}
-	return out
+	return nil
 }
 
 func resolvePrefix(flagValue string, disable bool) (string, error) {
