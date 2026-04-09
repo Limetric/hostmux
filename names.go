@@ -35,8 +35,10 @@ func resolveRequestedNamesInDir(dir string, explicit []string) ([]string, error)
 	} else if name != "" {
 		return []string{name}, nil
 	}
-	if name := normalizeInferredName(filepath.Base(gitRoot)); name != "" {
-		return []string{name}, nil
+	if gitRoot != "" {
+		if name := normalizeInferredName(filepath.Base(gitRoot)); name != "" {
+			return []string{name}, nil
+		}
 	}
 	if name := normalizeInferredName(filepath.Base(dir)); name != "" {
 		return []string{name}, nil
