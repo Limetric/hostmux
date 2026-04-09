@@ -5,7 +5,6 @@
 package daemonctl
 
 import (
-	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -13,8 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/sys/unix"
-
+	"github.com/Limetric/hostmux/internal/filelock"
 	"github.com/Limetric/hostmux/internal/sockproto"
 )
 
@@ -29,15 +27,14 @@ func probeFlock(path string) (held bool, err error) {
 		return false, fmt.Errorf("open pid file: %w", err)
 	}
 	defer f.Close()
-	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
-		if errors.Is(err, unix.EWOULDBLOCK) {
-			return true, nil
-		}
+	held, err = filelock.TryLock(f)
+	if err != nil {
 		return false, fmt.Errorf("flock probe: %w", err)
 	}
-	// Acquired successfully — nobody was holding it. Release immediately.
-	_ = unix.Flock(int(f.Fd()), unix.LOCK_UN)
-	return false, nil
+	if !held {
+		_ = filelock.Unlock(f)
+	}
+	return held, nil
 }
 
 // waitForFlockRelease polls the PID-file flock every 20ms until it can be
@@ -85,15 +82,15 @@ func readPID(path string) (int, error) {
 type StopOptions struct {
 	// SockPath is the Unix socket the daemon listens on. Stop tries to
 	// dial this first for a graceful OpShutdown before falling back to
-	// the PID-file SIGTERM path.
+	// the PID-file kill path.
 	SockPath string
 	// PIDPath is the path to the PID file the daemon holds a flock on.
 	// This is the authoritative "is a daemon running" signal.
 	PIDPath string
 	// GracefulTimeout is how long to wait after asking the daemon to
-	// shut down before escalating to SIGKILL. Defaults to 5 seconds.
+	// shut down before escalating. Defaults to 5 seconds.
 	GracefulTimeout time.Duration
-	// KillTimeout is how long to wait after SIGKILL before giving up.
+	// KillTimeout is how long to wait after the forceful kill before giving up.
 	// Defaults to 2 seconds.
 	KillTimeout time.Duration
 }
@@ -106,7 +103,7 @@ type StopResult struct {
 	// UsedSocket is true when the graceful OpShutdown path succeeded.
 	UsedSocket bool
 	// UsedSIGKILL is true when the graceful path timed out and Stop had
-	// to escalate to SIGKILL.
+	// to escalate to a forceful kill.
 	UsedSIGKILL bool
 }
 
@@ -137,9 +134,9 @@ func Stop(opts StopOptions) (StopResult, error) {
 	if err := askSocketShutdown(opts.SockPath); err == nil {
 		res.UsedSocket = true
 	} else {
-		// Fall through to the SIGTERM path.
-		if sigErr := sendSignal(opts.PIDPath, unix.SIGTERM); sigErr != nil {
-			return res, fmt.Errorf("graceful shutdown failed (%v) and SIGTERM failed: %w", err, sigErr)
+		// Fall through to the kill path.
+		if killErr := killProcess(opts.PIDPath, true); killErr != nil {
+			return res, fmt.Errorf("graceful shutdown failed (%v) and kill failed: %w", err, killErr)
 		}
 	}
 
@@ -148,13 +145,13 @@ func Stop(opts StopOptions) (StopResult, error) {
 		return res, nil
 	}
 
-	// 4. Escalate to SIGKILL.
+	// 4. Escalate to forceful kill.
 	res.UsedSIGKILL = true
-	if err := sendSignal(opts.PIDPath, unix.SIGKILL); err != nil {
-		return res, fmt.Errorf("SIGKILL: %w", err)
+	if err := killProcess(opts.PIDPath, false); err != nil {
+		return res, fmt.Errorf("forceful kill: %w", err)
 	}
 	if err := waitForFlockRelease(opts.PIDPath, opts.KillTimeout); err != nil {
-		return res, fmt.Errorf("daemon did not exit even after SIGKILL: %w", err)
+		return res, fmt.Errorf("daemon did not exit even after forceful kill: %w", err)
 	}
 	return res, nil
 }
@@ -180,18 +177,6 @@ func askSocketShutdown(sockPath string) error {
 	}
 	if !resp.Ok {
 		return fmt.Errorf("shutdown rejected: %s", resp.Error)
-	}
-	return nil
-}
-
-// sendSignal reads the PID from the PID file and delivers the given signal.
-func sendSignal(pidPath string, sig unix.Signal) error {
-	pid, err := readPID(pidPath)
-	if err != nil {
-		return err
-	}
-	if err := unix.Kill(pid, sig); err != nil {
-		return fmt.Errorf("kill %d: %w", pid, err)
 	}
 	return nil
 }
