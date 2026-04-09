@@ -27,6 +27,7 @@ func TestResolveRequestedNamesUsesNearestPackageJSON(t *testing.T) {
 	mustMkdirAll(t, filepath.Join(root, "apps", "web", "src"))
 	mustWriteFile(t, filepath.Join(root, "package.json"), `{"name":"root-app"}`)
 	mustWriteFile(t, filepath.Join(root, "apps", "web", "package.json"), `{"name":"@scope/Web App"}`)
+	mustRunGit(t, root, "init")
 
 	got, err := resolveRequestedNamesInDir(filepath.Join(root, "apps", "web", "src"), nil)
 	if err != nil {
@@ -83,6 +84,21 @@ func TestResolveRequestedNamesIgnoresUnusablePackageName(t *testing.T) {
 func TestResolveRequestedNamesFallsBackToCWDBasename(t *testing.T) {
 	wd := filepath.Join(t.TempDir(), "My App!!!")
 	mustMkdirAll(t, wd)
+
+	got, err := resolveRequestedNamesInDir(wd, nil)
+	if err != nil {
+		t.Fatalf("resolveRequestedNames() error = %v", err)
+	}
+	if want := []string{"my-app"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("resolveRequestedNames() = %v, want %v", got, want)
+	}
+}
+
+func TestResolveRequestedNamesDoesNotWalkPastStartDirOutsideGit(t *testing.T) {
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	wd := filepath.Join(workspace, "My App!!!")
+	mustMkdirAll(t, wd)
+	mustWriteFile(t, filepath.Join(workspace, "package.json"), `{"name":"outer-workspace"}`)
 
 	got, err := resolveRequestedNamesInDir(wd, nil)
 	if err != nil {

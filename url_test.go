@@ -93,6 +93,16 @@ func TestURLCommandPrintsOneLinePerRepeatedNameFlag(t *testing.T) {
 	}
 }
 
+func TestURLCommandRejectsInvalidExplicitName(t *testing.T) {
+	_, stderr, err := runURLAndCapture(t, urlOptions{Names: []string{"My App"}})
+	if err == nil {
+		t.Fatal("runURL error = nil, want error")
+	}
+	if got := err.Error(); !strings.Contains(got, "valid bare label, hostname, or IP literal") {
+		t.Fatalf("error = %q, stderr = %q", got, stderr)
+	}
+}
+
 func TestRunURLSupportsMultipleExplicitNames(t *testing.T) {
 	stdout, stderr, err := runURLAndCapture(t, urlOptions{
 		Domain:  "example.com",

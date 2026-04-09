@@ -148,8 +148,18 @@ func runCommand(opts runOptions) error {
 
 func validateExplicitNames(names []string) error {
 	for _, name := range names {
-		if strings.TrimSpace(name) == "" {
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" {
 			return fmt.Errorf("--name must be non-empty")
+		}
+		for _, r := range trimmed {
+			isAlphaNum := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
+			switch {
+			case isAlphaNum:
+			case r == '-' || r == '.' || r == ':' || r == '[' || r == ']':
+			default:
+				return fmt.Errorf("--name must be a valid bare label, hostname, or IP literal")
+			}
 		}
 	}
 	return nil

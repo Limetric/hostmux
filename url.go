@@ -15,8 +15,9 @@ type urlOptions struct {
 	Prefix     string
 	NoPrefix   bool
 	Names      []string
-	HostArg    string
-	Writer     io.Writer
+	// HostArg remains as a direct test seam for legacy helper-driven coverage.
+	HostArg string
+	Writer  io.Writer
 }
 
 func runURL(opts urlOptions) error {

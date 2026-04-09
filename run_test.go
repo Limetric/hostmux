@@ -402,6 +402,23 @@ func TestRunCommandRejectsMixedValidAndEmptyExplicitNames(t *testing.T) {
 	}
 }
 
+func TestRunCommandRejectsInvalidExplicitName(t *testing.T) {
+	hosts, code, stderr := runRunCommandAndCapture(t, runServerScript{}, []string{
+		"--name", "My App",
+		"--",
+		"/usr/bin/true",
+	})
+	if code == 0 {
+		t.Fatalf("run command exit code = %d, want non-zero", code)
+	}
+	if len(hosts) != 0 {
+		t.Fatalf("registered hosts = %v, want none", hosts)
+	}
+	if got := stderr; !bytes.Contains([]byte(got), []byte("valid bare label, hostname, or IP literal")) {
+		t.Fatalf("stderr = %q", stderr)
+	}
+}
+
 func TestRunCommandPassesThroughBareHostWhenNoDomainAvailable(t *testing.T) {
 	hosts, code, stderr := runRunCommandAndCapture(t, runServerScript{}, []string{
 		"--name", "api",

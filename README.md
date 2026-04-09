@@ -52,7 +52,7 @@ More useful commands:
 
 `hostmux run` allocates a free TCP port, sets `PORT=<port>` in the child's environment, expands bare subdomains using `--domain` (or the daemon's configured `domain`), registers the resulting hostnames with the daemon, streams the child's stdio, and automatically deregisters when the child exits - even on crash or `kill -9`.
 
-Pass one or more `--name` flags to register explicit names:
+Pass one or more `--name` flags to register explicit bare labels, full hostnames, or IP literals:
 
 ```sh
 ./build/hostmux run --domain example.com --name app --name admin -- bun run dev

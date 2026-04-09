@@ -25,8 +25,12 @@ func resolveRequestedNamesInDir(dir string, explicit []string) ([]string, error)
 	dir = canonicalPath(dir)
 
 	gitRoot, _ := gitTopLevel(dir)
+	stop := gitRoot
+	if stop == "" {
+		stop = dir
+	}
 
-	if name, err := inferPackageName(dir, gitRoot); err != nil {
+	if name, err := inferPackageName(dir, stop); err != nil {
 		return nil, err
 	} else if name != "" {
 		return []string{name}, nil
