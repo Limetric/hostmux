@@ -199,7 +199,7 @@ func TestRunCommandExpandsBareHostWithDomainFlag(t *testing.T) {
 		"/usr/bin/true",
 	})
 	if code != 0 {
-		t.Fatalf("cmdRun exit code = %d, stderr = %q", code, stderr)
+		t.Fatalf("run command exit code = %d, stderr = %q", code, stderr)
 	}
 	want := []string{"api.example.com"}
 	if !reflect.DeepEqual(hosts, want) {
@@ -217,7 +217,7 @@ func TestRunCommandPreservesFullHostnameWithDomainFlag(t *testing.T) {
 		"/usr/bin/true",
 	})
 	if code != 0 {
-		t.Fatalf("cmdRun exit code = %d, stderr = %q", code, stderr)
+		t.Fatalf("run command exit code = %d, stderr = %q", code, stderr)
 	}
 	want := []string{"admin.other.test"}
 	if !reflect.DeepEqual(hosts, want) {
@@ -236,7 +236,7 @@ func TestRunCommandAppliesPrefixBeforeDomainExpansion(t *testing.T) {
 		"/usr/bin/true",
 	})
 	if code != 0 {
-		t.Fatalf("cmdRun exit code = %d, stderr = %q", code, stderr)
+		t.Fatalf("run command exit code = %d, stderr = %q", code, stderr)
 	}
 	want := []string{"feature-x-api.example.com"}
 	if !reflect.DeepEqual(hosts, want) {
@@ -253,7 +253,7 @@ func TestRunCommandUsesDaemonDomainForBareHost(t *testing.T) {
 		"/usr/bin/true",
 	})
 	if code != 0 {
-		t.Fatalf("cmdRun exit code = %d, stderr = %q", code, stderr)
+		t.Fatalf("run command exit code = %d, stderr = %q", code, stderr)
 	}
 	want := []string{"api.example.com"}
 	if !reflect.DeepEqual(hosts, want) {
@@ -268,7 +268,7 @@ func TestRunCommandPassesThroughBareHostWhenNoDomainAvailable(t *testing.T) {
 		"/usr/bin/true",
 	})
 	if code != 0 {
-		t.Fatalf("cmdRun exit code = %d, stderr = %q", code, stderr)
+		t.Fatalf("run command exit code = %d, stderr = %q", code, stderr)
 	}
 	want := []string{"api"}
 	if !reflect.DeepEqual(hosts, want) {
@@ -286,7 +286,7 @@ func TestRunCommandFallsBackWhenDaemonDoesNotSupportInfo(t *testing.T) {
 		"sh", "-c", `[ -z "${HOSTMUX_URL}" ]`,
 	})
 	if code != 0 {
-		t.Fatalf("cmdRun exit code = %d, stderr = %q", code, stderr)
+		t.Fatalf("run command exit code = %d, stderr = %q", code, stderr)
 	}
 	want := []string{"api"}
 	if !reflect.DeepEqual(hosts, want) {
@@ -317,7 +317,7 @@ func TestRunCommandHostmuxURLSchemeMatchesDaemonEdge(t *testing.T) {
 				"sh", "-c", `test "$HOSTMUX_URL" = "` + tt.wantURL + `"`,
 			})
 			if code != 0 {
-				t.Fatalf("cmdRun exit code = %d, stderr = %q", code, stderr)
+				t.Fatalf("run command exit code = %d, stderr = %q", code, stderr)
 			}
 		})
 	}
