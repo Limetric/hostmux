@@ -15,7 +15,7 @@ type frameworkMeta struct {
 // See vercel-labs/portless injectFrameworkFlags (cli-utils.ts).
 var frameworksNeedingPort = map[string]frameworkMeta{
 	"vite":         {strictPort: true},
-	"vp":           {strictPort: true},
+	"vp":           {strictPort: true}, // VitePress CLI binary
 	"react-router": {strictPort: true},
 	"astro":        {strictPort: false},
 	"ng":           {strictPort: false},
@@ -25,7 +25,9 @@ var frameworksNeedingPort = map[string]frameworkMeta{
 
 // packageRunners maps a runner binary to subcommands that must appear before
 // the framework binary (empty slice: runner invokes the framework directly,
-// e.g. npx vite).
+// e.g. npx vite). We intentionally do not treat "run" as a runner subcommand:
+// yarn run vite / pnpm run vite execute package.json scripts and are not
+// expanded here (the child process is yarn/pnpm, not vite).
 var packageRunners = map[string][]string{
 	"npx":  {},
 	"bunx": {},
@@ -49,9 +51,11 @@ func InjectFrameworkArgs(argv []string, port int, bindHost string) []string {
 
 	if !argvHasFlag(out, "--port") {
 		out = append(out, "--port", strconv.Itoa(port))
-		if cfg.strictPort {
-			out = append(out, "--strictPort")
-		}
+	}
+	// strictPort is independent: user-supplied --port still needs --strictPort
+	// so Vite cannot silently hop to another port and desync from the proxy.
+	if cfg.strictPort && !argvHasFlag(out, "--strictPort") {
+		out = append(out, "--strictPort")
 	}
 
 	if !argvHasFlag(out, "--host") {

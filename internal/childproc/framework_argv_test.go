@@ -45,9 +45,25 @@ func TestInjectFrameworkArgsYarnDlxVite(t *testing.T) {
 	}
 }
 
-func TestInjectFrameworkArgsNoDupWhenPortPresent(t *testing.T) {
+func TestInjectFrameworkArgsPnpmExecVite(t *testing.T) {
+	got := InjectFrameworkArgs([]string{"pnpm", "exec", "vite"}, 4010, "127.0.0.1")
+	want := []string{"pnpm", "exec", "vite", "--port", "4010", "--strictPort", "--host", "127.0.0.1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestInjectFrameworkArgsBunxVite(t *testing.T) {
+	got := InjectFrameworkArgs([]string{"bunx", "vite"}, 4011, "127.0.0.1")
+	want := []string{"bunx", "vite", "--port", "4011", "--strictPort", "--host", "127.0.0.1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestInjectFrameworkArgsNoDupWhenPortPresentStillAddsStrictPort(t *testing.T) {
 	got := InjectFrameworkArgs([]string{"vite", "--port", "9999"}, 5555, "127.0.0.1")
-	want := []string{"vite", "--port", "9999", "--host", "127.0.0.1"}
+	want := []string{"vite", "--port", "9999", "--strictPort", "--host", "127.0.0.1"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -61,9 +77,9 @@ func TestInjectFrameworkArgsNoDupWhenHostPresent(t *testing.T) {
 	}
 }
 
-func TestInjectFrameworkArgsPortEqualsForm(t *testing.T) {
+func TestInjectFrameworkArgsPortEqualsFormStillAddsStrictPort(t *testing.T) {
 	got := InjectFrameworkArgs([]string{"vite", "--port=3000"}, 5555, "127.0.0.1")
-	want := []string{"vite", "--port=3000", "--host", "127.0.0.1"}
+	want := []string{"vite", "--port=3000", "--strictPort", "--host", "127.0.0.1"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}

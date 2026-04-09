@@ -132,10 +132,11 @@ func runCommand(opts runOptions) error {
 
 	// Run the child to completion. Frameworks that ignore PORT (Vite, Astro,
 	// etc.) get --port/--host injected like portless does.
-	argv := childproc.InjectFrameworkArgs(opts.Argv, port, "127.0.0.1")
+	const bindHost = "127.0.0.1"
+	argv := childproc.InjectFrameworkArgs(opts.Argv, port, bindHost)
 	code, err := childproc.Run(context.Background(), childproc.RunOpts{
 		Port:       port,
-		Host:       "127.0.0.1",
+		Host:       bindHost,
 		HostmuxURL: publicURL,
 		Argv:       argv,
 	})
