@@ -63,6 +63,11 @@ func runForegroundDaemon(opts startOptions) error {
 
 	// Optional config file. If not provided, look in standard locations.
 	resolvedConfigPath := resolveConfigPath(opts.ConfigPath)
+	if resolvedConfigPath != "" {
+		log.Printf("config: path %s", resolvedConfigPath)
+	} else {
+		log.Printf("config: no config file path (--config unset and default location unavailable)")
+	}
 	cfg, err := loadOptionalConfig(resolvedConfigPath)
 	if err != nil {
 		return fmt.Errorf("hostmux start: config: %w", err)
@@ -78,7 +83,7 @@ func runForegroundDaemon(opts startOptions) error {
 		if err := r.ReplaceSource("config", cfg.RouterEntries()); err != nil {
 			return fmt.Errorf("hostmux start: config: initial load rejected: %w", err)
 		}
-		log.Printf("config: loaded %s (%d apps)", resolvedConfigPath, len(cfg.Apps))
+		log.Printf("config: loaded (%d apps)", len(cfg.Apps))
 	}
 
 	// Resolve listen address and TLS material.
