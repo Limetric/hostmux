@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"golang.org/x/sys/unix"
+	"github.com/Limetric/hostmux/internal/filelock"
 )
 
 // Options bundles per-invocation overrides for path resolution.
@@ -140,10 +140,14 @@ func discoveryAlive(sockPath string) bool {
 	}
 	defer f.Close()
 
-	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
-		return errors.Is(err, unix.EWOULDBLOCK)
+	held, err := filelock.TryLock(f)
+	if err != nil {
+		return false
 	}
-	_ = unix.Flock(int(f.Fd()), unix.LOCK_UN)
+	if held {
+		return true
+	}
+	_ = filelock.Unlock(f)
 	return false
 }
 

@@ -16,11 +16,10 @@ import (
 	"syscall"
 	"time"
 
-	"golang.org/x/sys/unix"
-
 	"github.com/Limetric/hostmux/internal/config"
 	"github.com/Limetric/hostmux/internal/daemon"
 	"github.com/Limetric/hostmux/internal/daemonctl"
+	"github.com/Limetric/hostmux/internal/filelock"
 	"github.com/Limetric/hostmux/internal/listener"
 	"github.com/Limetric/hostmux/internal/proxy"
 	"github.com/Limetric/hostmux/internal/router"
@@ -234,7 +233,7 @@ func runForegroundDaemon(opts startOptions) error {
 
 	// Wait for signals.
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	select {
 	case <-sigCh:
 	case <-ctx.Done():
@@ -360,20 +359,22 @@ func acquirePIDLock(path string) (*os.File, bool, error) {
 	if err != nil {
 		return nil, false, fmt.Errorf("open pid file: %w", err)
 	}
-	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+	held, err := filelock.TryLock(f)
+	if err != nil {
 		f.Close()
-		if errors.Is(err, unix.EWOULDBLOCK) {
-			return nil, true, nil
-		}
 		return nil, false, fmt.Errorf("flock pid file: %w", err)
 	}
+	if held {
+		f.Close()
+		return nil, true, nil
+	}
 	if err := f.Truncate(0); err != nil {
-		_ = unix.Flock(int(f.Fd()), unix.LOCK_UN)
+		_ = filelock.Unlock(f)
 		f.Close()
 		return nil, false, fmt.Errorf("truncate pid file: %w", err)
 	}
 	if _, err := f.WriteAt([]byte(fmt.Sprintf("%d\n", os.Getpid())), 0); err != nil {
-		_ = unix.Flock(int(f.Fd()), unix.LOCK_UN)
+		_ = filelock.Unlock(f)
 		f.Close()
 		return nil, false, fmt.Errorf("write pid file: %w", err)
 	}

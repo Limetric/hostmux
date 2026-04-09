@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/Limetric/hostmux/internal/config"
-	"golang.org/x/sys/unix"
+	"github.com/Limetric/hostmux/internal/filelock"
 )
 
 type Config struct {
@@ -150,7 +150,7 @@ func acquirePairLock(cfg Config) (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open tls lock: %w", err)
 	}
-	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
+	if err := filelock.Lock(f); err != nil {
 		f.Close()
 		return nil, fmt.Errorf("lock tls pair: %w", err)
 	}
