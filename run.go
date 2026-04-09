@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -24,25 +23,6 @@ type runOptions struct {
 	NoPrefix   bool
 	HostsArg   string
 	Argv       []string
-}
-
-func cmdRun(args []string) int {
-	cmd := newRunCmd()
-	cmd.SetArgs(args)
-	err := cmd.Execute()
-	if err == nil {
-		return 0
-	}
-
-	var exitErr exitError
-	if errors.As(err, &exitErr) {
-		if exitErr.text != "" {
-			fmt.Fprintln(os.Stderr, exitErr.text)
-		}
-		return exitErr.code
-	}
-	fmt.Fprintln(os.Stderr, err)
-	return 1
 }
 
 func runCommand(opts runOptions) error {

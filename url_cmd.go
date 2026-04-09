@@ -16,6 +16,7 @@ func newURLCmd() *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.HostArg = args[0]
+			opts.Writer = cmd.OutOrStdout()
 			return runURL(opts)
 		},
 	}

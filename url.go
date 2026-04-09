@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/Limetric/hostmux/internal/hostnames"
@@ -14,6 +15,7 @@ type urlOptions struct {
 	Prefix     string
 	NoPrefix   bool
 	HostArg    string
+	Writer     io.Writer
 }
 
 func runURL(opts urlOptions) error {
@@ -45,6 +47,11 @@ func runURL(opts urlOptions) error {
 		}
 	}
 
-	_, err = fmt.Fprintf(os.Stdout, "https://%s\n", hosts[0])
+	writer := opts.Writer
+	if writer == nil {
+		writer = os.Stdout
+	}
+
+	_, err = fmt.Fprintf(writer, "https://%s\n", hosts[0])
 	return err
 }

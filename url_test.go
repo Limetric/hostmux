@@ -25,6 +25,26 @@ func TestURLCommandPrintsExpandedURLWithDomainFlag(t *testing.T) {
 	}
 }
 
+func TestURLCommandUsesCobraOutputWriter(t *testing.T) {
+	cmd := newURLCmd()
+	cmd.SetArgs([]string{"--domain", "example.com", "--no-prefix", "backend"})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if got, want := stdout.String(), "https://backend.example.com\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty stderr", stderr.String())
+	}
+}
+
 func TestURLCommandAppliesPrefixBeforeDomainExpansion(t *testing.T) {
 	stdout, stderr, err := runURLAndCapture(t, urlOptions{
 		Domain:  "example.com",
@@ -184,37 +204,13 @@ func runURLAndCapture(t *testing.T, opts urlOptions) (string, string, error) {
 		}
 	})
 
-	stdout, restoreStdout := captureURLFileOutput(t, &os.Stdout)
-	stderr, restoreStderr := captureURLFileOutput(t, &os.Stderr)
+	var stdout bytes.Buffer
+	opts.Writer = &stdout
+	stderr, restoreStderr := captureRootFileOutput(t, &os.Stderr)
 
 	err = runURL(opts)
 
-	restoreStdout()
 	restoreStderr()
 
 	return stdout.String(), stderr.String(), err
-}
-
-func captureURLFileOutput(t *testing.T, target **os.File) (*bytes.Buffer, func()) {
-	t.Helper()
-
-	var buf bytes.Buffer
-	old := *target
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	*target = w
-
-	done := make(chan struct{})
-	go func() {
-		_, _ = buf.ReadFrom(r)
-		close(done)
-	}()
-
-	return &buf, func() {
-		_ = w.Close()
-		<-done
-		*target = old
-	}
 }
