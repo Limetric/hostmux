@@ -181,7 +181,6 @@ func runForegroundDaemon(opts startOptions) error {
 
 	// Start HTTP servers.
 	for _, srv := range servers {
-		srv := srv
 		go func() {
 			serr := srv.ListenAndServeTLS(tlsCfg.CertFile, tlsCfg.KeyFile)
 			if serr != nil && serr != http.ErrServerClosed {
@@ -373,7 +372,7 @@ func acquirePIDLock(path string) (*os.File, bool, error) {
 		f.Close()
 		return nil, false, fmt.Errorf("truncate pid file: %w", err)
 	}
-	if _, err := f.WriteAt([]byte(fmt.Sprintf("%d\n", os.Getpid())), 0); err != nil {
+	if _, err := f.WriteAt(fmt.Appendf(nil, "%d\n", os.Getpid()), 0); err != nil {
 		_ = filelock.Unlock(f)
 		f.Close()
 		return nil, false, fmt.Errorf("write pid file: %w", err)

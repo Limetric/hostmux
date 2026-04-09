@@ -240,7 +240,7 @@ func TestRunCommandUsesDashBetweenPrefixAndHost(t *testing.T) {
 
 		dec := sockproto.NewDecoder(conn)
 		enc := sockproto.NewEncoder(conn)
-		for i := 0; i < 2; i++ {
+		for range 2 {
 			msg, err := dec.Decode()
 			if err != nil {
 				errCh <- err

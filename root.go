@@ -90,8 +90,8 @@ func normalizeCLIError(err error) (exitError, bool) {
 	}
 
 	message := err.Error()
-	if strings.HasPrefix(message, "unknown command ") {
-		unknown := strings.TrimPrefix(message, "unknown command ")
+	if after, ok := strings.CutPrefix(message, "unknown command "); ok {
+		unknown := after
 		if idx := strings.Index(unknown, " for "); idx >= 0 {
 			unknown = unknown[:idx]
 		}
