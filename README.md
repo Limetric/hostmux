@@ -66,6 +66,8 @@ If you omit `--name`, `hostmux run` infers one name in this order:
 
 Inferred names are normalized to lowercase DNS-safe labels. Without either `--domain` or a daemon-configured domain, bare names pass through unchanged.
 
+If the child process takes its own `--` flags, keep a `--` before it so hostmux does not parse them (for example `./build/hostmux run -- vite dev --host 0.0.0.0`).
+
 `hostmux url` prints one `https://<hostname>` line per requested name using the same `--name`, `--domain`, `--prefix`, and `--no-prefix` resolution path as `hostmux run`. If `--name` is omitted, it uses the same inference order. If `--domain` is omitted and a daemon is available, it also reuses the daemon's configured domain for bare names.
 
 ## Behind cloudflared

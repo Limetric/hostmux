@@ -9,8 +9,14 @@ func newRunCmd() *cobra.Command {
 	var names []string
 
 	cmd := &cobra.Command{
-		Use:   "run [--name NAME]... [-- COMMAND [ARGS...] | COMMAND [ARGS...]]",
+		Use:   "run [--name NAME]... [--] COMMAND [ARGS...]",
 		Short: "Run a command and register its upstream",
+		Long: `Run a child process and register its upstream with the daemon.
+
+You may omit "--" before COMMAND when the child takes no arguments that look like
+hostmux flags. If the child uses "--" options (e.g. vite --host), put "--" before
+the child so those tokens are not parsed as hostmux flags:
+  hostmux run -- vite dev --host 0.0.0.0`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			argsLenAtDash := cmd.ArgsLenAtDash()
 			if len(args) == 0 {
