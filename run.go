@@ -90,7 +90,7 @@ func runCommand(opts runOptions) error {
 	defer conn.Close()
 	enc := sockproto.NewEncoder(conn)
 	dec := sockproto.NewDecoder(conn)
-	daemonDomain, publicHTTPS, err := lookupDaemonInfoClient(enc, dec)
+	daemonDomain, publicHTTPS, _, err := lookupDaemonInfoClient(enc, dec)
 	if hostnames.HasBare(hosts) {
 		if err == nil {
 			hosts = hostnames.Expand(hosts, daemonDomain)

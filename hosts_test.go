@@ -88,10 +88,10 @@ func TestLookupDaemonInfoClient_Success(t *testing.T) {
 			return
 		}
 		pub := true
-		_ = enc.Encode(&sockproto.Message{Ok: true, Domain: "example.com", PublicHTTPS: &pub})
+		_ = enc.Encode(&sockproto.Message{Ok: true, Domain: "example.com", PublicHTTPS: &pub, PublicPort: 8443})
 	}()
 
-	domain, pub, err := lookupDaemonInfoClient(sockproto.NewEncoder(c1), sockproto.NewDecoder(c1))
+	domain, pub, port, err := lookupDaemonInfoClient(sockproto.NewEncoder(c1), sockproto.NewDecoder(c1))
 	if err != nil {
 		t.Fatalf("lookupDaemonInfoClient: %v", err)
 	}
@@ -100,6 +100,9 @@ func TestLookupDaemonInfoClient_Success(t *testing.T) {
 	}
 	if !pub {
 		t.Fatal("PublicHTTPS = false, want true")
+	}
+	if port != 8443 {
+		t.Fatalf("publicPort = %d, want 8443", port)
 	}
 }
 
@@ -117,7 +120,7 @@ func TestLookupDaemonInfoClient_PropagatesDaemonError(t *testing.T) {
 		_ = enc.Encode(&sockproto.Message{Ok: false, Error: "refused"})
 	}()
 
-	_, _, err := lookupDaemonInfoClient(sockproto.NewEncoder(c1), sockproto.NewDecoder(c1))
+	_, _, _, err := lookupDaemonInfoClient(sockproto.NewEncoder(c1), sockproto.NewDecoder(c1))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -140,7 +143,7 @@ func TestLookupDaemonInfoClient_RejectedWithoutMessage(t *testing.T) {
 		_ = enc.Encode(&sockproto.Message{Ok: false})
 	}()
 
-	_, _, err := lookupDaemonInfoClient(sockproto.NewEncoder(c1), sockproto.NewDecoder(c1))
+	_, _, _, err := lookupDaemonInfoClient(sockproto.NewEncoder(c1), sockproto.NewDecoder(c1))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -164,7 +167,7 @@ func TestLookupDaemonInfoClient_PublicHTTPSFalseWhenSet(t *testing.T) {
 		_ = enc.Encode(&sockproto.Message{Ok: true, Domain: "plain.local", PublicHTTPS: &pub})
 	}()
 
-	_, pub, err := lookupDaemonInfoClient(sockproto.NewEncoder(c1), sockproto.NewDecoder(c1))
+	_, pub, _, err := lookupDaemonInfoClient(sockproto.NewEncoder(c1), sockproto.NewDecoder(c1))
 	if err != nil {
 		t.Fatalf("lookupDaemonInfoClient: %v", err)
 	}
