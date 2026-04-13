@@ -396,3 +396,28 @@ func readPIDFile(path string) (int, error) {
 	}
 	return pid, nil
 }
+
+// extractListenPort parses the TCP port out of a listen address such as
+// ":8443", "0.0.0.0:443", "127.0.0.1:8443", or "[::1]:8443". Empty or
+// malformed inputs return an error.
+func extractListenPort(listen string) (int, error) {
+	if listen == "" {
+		return 0, fmt.Errorf("empty listen address")
+	}
+	_, portStr, err := net.SplitHostPort(listen)
+	if err != nil {
+		return 0, fmt.Errorf("split listen %q: %w", listen, err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return 0, fmt.Errorf("parse port %q: %w", portStr, err)
+	}
+	// Reject port 0 (OS-assigned ephemeral) and negative values.
+	// Port 0 doubles as the "unspecified — use scheme default" sentinel
+	// on the wire; passing it through would silently misrepresent the
+	// real bound port in URLs.
+	if port <= 0 {
+		return 0, fmt.Errorf("listen %q: port must be > 0, got %d", listen, port)
+	}
+	return port, nil
+}

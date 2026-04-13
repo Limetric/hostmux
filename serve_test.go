@@ -64,3 +64,37 @@ func TestResolveServeSocketPath_SocketFlagOverridesConfig(t *testing.T) {
 		t.Fatalf("got %q want %q", got, flagSock)
 	}
 }
+
+func TestExtractListenPort(t *testing.T) {
+	cases := []struct {
+		in      string
+		want    int
+		wantErr bool
+	}{
+		{":443", 443, false},
+		{":8443", 8443, false},
+		{"0.0.0.0:443", 443, false},
+		{"127.0.0.1:8443", 8443, false},
+		{"[::1]:8443", 8443, false},
+		{":0", 0, true},
+		{"", 0, true},
+		{"junk", 0, true},
+		{":notaport", 0, true},
+	}
+	for _, tc := range cases {
+		got, err := extractListenPort(tc.in)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("extractListenPort(%q) = %d, nil; want error", tc.in, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("extractListenPort(%q) error = %v", tc.in, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("extractListenPort(%q) = %d, want %d", tc.in, got, tc.want)
+		}
+	}
+}
