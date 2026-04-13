@@ -169,25 +169,70 @@ func runForegroundDaemon(opts startOptions) error {
 	defer pidLock.Close()
 
 	// HTTP listeners.
+	// Pre-bind the TLS TCP listener so the OS resolves any ":0" port before we
+	// need to report the real address to clients via OpInfo (PublicPort).
+	var tlsLn net.Listener
+	var publicPort int
+	if tlsCfg != nil {
+		ln, lerr := net.Listen("tcp", tlsCfg.Listen)
+		if lerr != nil {
+			return fmt.Errorf("hostmux start: listener: bind %s: %w", tlsCfg.Listen, lerr)
+		}
+		tlsLn = ln
+		tlsCfg.Listen = ln.Addr().String()
+		// ln.Addr().String() is a canonical host:port produced by the
+		// standard library, so extractListenPort cannot fail on it in
+		// practice. Treat any error as a hard failure rather than silently
+		// reporting PublicPort=0, which would misrepresent URLs to clients.
+		p, perr := extractListenPort(tlsCfg.Listen)
+		if perr != nil {
+			tlsLn.Close()
+			return fmt.Errorf("hostmux start: parse resolved listen %q: %w", tlsCfg.Listen, perr)
+		}
+		publicPort = p
+	}
+
 	handler := proxy.New(r)
 	lc := listener.Config{TLS: tlsCfg}
 	servers, err := listener.Build(lc, handler)
 	if err != nil {
+		if tlsLn != nil {
+			tlsLn.Close()
+		}
 		return fmt.Errorf("hostmux start: listener: %w", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Start HTTP servers.
-	for _, srv := range servers {
-		go func() {
-			serr := srv.ListenAndServeTLS(tlsCfg.CertFile, tlsCfg.KeyFile)
-			if serr != nil && serr != http.ErrServerClosed {
-				log.Printf("http server: %v", serr)
-				cancel()
-			}
-		}()
+	// Start HTTP servers. The last server is the TLS one (Build appends TLS
+	// after plain); hand it the pre-bound listener so ServeTLS reuses the
+	// already-bound port instead of calling Listen again.
+	for i, srv := range servers {
+		isTLS := tlsLn != nil && i == len(servers)-1
+		if isTLS {
+			ln := tlsLn
+			go func() {
+				serr := srv.ServeTLS(ln, tlsCfg.CertFile, tlsCfg.KeyFile)
+				if serr != nil && serr != http.ErrServerClosed {
+					log.Printf("http server: %v", serr)
+					cancel()
+				}
+			}()
+		} else {
+			// Unreachable today: runForegroundDaemon never configures a plain
+			// listener, so listener.Build does not return one. Preserved from
+			// the original loop and kept in lockstep. Before enabling a plain
+			// listener, note that calling ListenAndServeTLS on a plain server
+			// is wrong — switch this branch to srv.ListenAndServe().
+			go func() {
+				serr := srv.ListenAndServeTLS(tlsCfg.CertFile, tlsCfg.KeyFile)
+				if serr != nil && serr != http.ErrServerClosed {
+					log.Printf("http server: %v", serr)
+					cancel()
+				}
+			}()
+		}
 	}
 	log.Printf("hostmux start: TLS listening on %s", tlsCfg.Listen)
 	if generatedTLS {
@@ -202,7 +247,8 @@ func runForegroundDaemon(opts startOptions) error {
 		},
 		// PlainHTTP is unreachable while serve always configures lc.TLS; kept for
 		// a future plain-only public listener (lc.TLS == nil).
-		PlainHTTP: lc.TLS == nil,
+		PlainHTTP:  lc.TLS == nil,
+		PublicPort: publicPort,
 	})
 	if err := sockSrv.Listen(sockPath); err != nil {
 		return fmt.Errorf("hostmux start: sockserver: %w", err)

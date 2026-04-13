@@ -259,8 +259,20 @@ func TestURLInheritsDomainFromDaemonConfig(t *testing.T) {
 	t.Cleanup(func() { os.RemoveAll(sockDir) })
 	sockPath := filepath.Join(sockDir, "t.sock")
 
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyAddr := l.Addr().String()
+	l.Close()
+	_, portStr, err := net.SplitHostPort(proxyAddr)
+	if err != nil {
+		t.Fatalf("split host port %q: %v", proxyAddr, err)
+	}
+
 	cfgPath := filepath.Join(binDir, "hostmux.toml")
-	if err := os.WriteFile(cfgPath, []byte("listen = \"127.0.0.1:0\"\ndomain = \"example.com\"\n"), 0o644); err != nil {
+	cfgBody := fmt.Sprintf("listen = %q\ndomain = \"example.com\"\n", proxyAddr)
+	if err := os.WriteFile(cfgPath, []byte(cfgBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -285,7 +297,8 @@ func TestURLInheritsDomainFromDaemonConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url: %v\n%s", err, out)
 	}
-	if got, want := string(out), "https://api.example.com\n"; got != want {
+	want := fmt.Sprintf("https://api.example.com:%s\n", portStr)
+	if got := string(out); got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
