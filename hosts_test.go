@@ -175,27 +175,3 @@ func TestLookupDaemonInfoClient_PublicHTTPSFalseWhenSet(t *testing.T) {
 		t.Fatal("PublicHTTPS = true, want false")
 	}
 }
-
-func TestLookupDaemonDomainClient_DelegatesToInfo(t *testing.T) {
-	c1, c2 := net.Pipe()
-	defer c1.Close()
-
-	go func() {
-		defer c2.Close()
-		dec := sockproto.NewDecoder(c2)
-		enc := sockproto.NewEncoder(c2)
-		if _, err := dec.Decode(); err != nil {
-			return
-		}
-		pub := true
-		_ = enc.Encode(&sockproto.Message{Ok: true, Domain: "d.example", PublicHTTPS: &pub})
-	}()
-
-	domain, err := lookupDaemonDomainClient(sockproto.NewEncoder(c1), sockproto.NewDecoder(c1))
-	if err != nil {
-		t.Fatalf("lookupDaemonDomainClient: %v", err)
-	}
-	if domain != "d.example" {
-		t.Fatalf("domain = %q", domain)
-	}
-}

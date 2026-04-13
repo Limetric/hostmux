@@ -37,12 +37,14 @@ func runURL(opts urlOptions) error {
 		return exitError{code: 1, text: fmt.Sprintf("hostmux url: %v", err)}
 	}
 
+	var daemonPort int
 	if hostnames.HasBare(hosts) {
 		sockPath, err := sockpath.Resolve(sockpath.Options{Flag: opts.SocketPath})
 		if err == nil {
-			domain, err := lookupDaemonDomain(sockPath)
+			domain, _, port, err := lookupDaemonInfo(sockPath)
 			if err == nil {
 				hosts = hostnames.Expand(hosts, domain)
+				daemonPort = port
 			} else {
 				fmt.Fprintf(os.Stderr, "hostmux url: %v; using bare host unchanged\n", err)
 			}
@@ -50,6 +52,7 @@ func runURL(opts urlOptions) error {
 			fmt.Fprintf(os.Stderr, "hostmux url: %v; using bare host unchanged\n", err)
 		}
 	}
+	_ = daemonPort // wired up in Task 7
 
 	writer := opts.Writer
 	if writer == nil {
