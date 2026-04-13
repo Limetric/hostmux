@@ -119,10 +119,13 @@ sudo iptables -t nat -A OUTPUT -p tcp -o lo --dport 443 -j REDIRECT --to-ports 8
 ### macOS
 
 macOS's packet filter can redirect `127.0.0.1:443 → 127.0.0.1:8443` so
-hostmux itself stays unprivileged. Create `/etc/pf.anchors/hostmux` with:
+hostmux itself stays unprivileged. Because browsers on modern macOS
+usually resolve `*.localhost` to `::1` (IPv6 loopback), the anchor needs
+both IPv4 and IPv6 rules. Create `/etc/pf.anchors/hostmux` with:
 
 ```
 rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1 port 8443
+rdr pass on lo0 inet6 proto tcp from any to ::1 port 443 -> ::1 port 8443
 ```
 
 Add an anchor hook to `/etc/pf.conf`:

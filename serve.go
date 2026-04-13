@@ -231,12 +231,10 @@ func runForegroundDaemon(opts startOptions) error {
 			}()
 		} else {
 			// Unreachable today: runForegroundDaemon never configures a plain
-			// listener, so listener.Build does not return one. Preserved from
-			// the original loop and kept in lockstep. Before enabling a plain
-			// listener, note that calling ListenAndServeTLS on a plain server
-			// is wrong — switch this branch to srv.ListenAndServe().
+			// listener, so listener.Build does not return one. Kept wired up
+			// so enabling a plain listener later is a config-only change.
 			go func() {
-				serr := srv.ListenAndServeTLS(tlsCfg.CertFile, tlsCfg.KeyFile)
+				serr := srv.ListenAndServe()
 				if serr != nil && serr != http.ErrServerClosed {
 					log.Printf("http server: %v", serr)
 					cancel()
