@@ -20,6 +20,7 @@ import (
 	"github.com/Limetric/hostmux/internal/daemon"
 	"github.com/Limetric/hostmux/internal/daemonctl"
 	"github.com/Limetric/hostmux/internal/filelock"
+	"github.com/Limetric/hostmux/internal/hostnames"
 	"github.com/Limetric/hostmux/internal/listener"
 	"github.com/Limetric/hostmux/internal/proxy"
 	"github.com/Limetric/hostmux/internal/router"
@@ -190,6 +191,10 @@ func runForegroundDaemon(opts startOptions) error {
 			return fmt.Errorf("hostmux start: parse resolved listen %q: %w", tlsCfg.Listen, perr)
 		}
 		publicPort = p
+	}
+
+	if shouldWarnLocalhostPort(currentDomain.Load().(string), publicPort) {
+		log.Printf("hostmux start: listening on :%d but domain is localhost; browsers expect https:// on :443 unless the URL includes an explicit port. See README \"HTTPS on port 443\".", publicPort)
 	}
 
 	handler := proxy.New(r)
@@ -466,4 +471,19 @@ func extractListenPort(listen string) (int, error) {
 		return 0, fmt.Errorf("listen %q: port must be > 0, got %d", listen, port)
 	}
 	return port, nil
+}
+
+// shouldWarnLocalhostPort returns true when the daemon is configured with
+// domain "localhost" but not listening on port 443. In that case,
+// browsers expect `https://<name>.localhost` to hit port 443 by default,
+// so printed URLs must include the real port to be clickable — and the
+// user probably wants to know.
+//
+// A port of 0 suppresses the warning: it means we failed to parse the
+// listen address and already logged something about that failure.
+func shouldWarnLocalhostPort(domain string, port int) bool {
+	if port == 0 || port == 443 {
+		return false
+	}
+	return hostnames.NormalizeDomain(domain) == "localhost"
 }

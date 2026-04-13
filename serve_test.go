@@ -65,6 +65,28 @@ func TestResolveServeSocketPath_SocketFlagOverridesConfig(t *testing.T) {
 	}
 }
 
+func TestShouldWarnLocalhostPort(t *testing.T) {
+	cases := []struct {
+		name   string
+		domain string
+		port   int
+		want   bool
+	}{
+		{"localhost on 443", "localhost", 443, false},
+		{"localhost on 8443", "localhost", 8443, true},
+		{"localhost on 0 (parse failed)", "localhost", 0, false},
+		{"example.com on 8443", "example.com", 8443, false},
+		{"empty domain on 8443", "", 8443, false},
+		{"trailing dot localhost on 8443", "localhost.", 8443, true},
+	}
+	for _, tc := range cases {
+		got := shouldWarnLocalhostPort(tc.domain, tc.port)
+		if got != tc.want {
+			t.Errorf("%s: shouldWarnLocalhostPort(%q, %d) = %v, want %v", tc.name, tc.domain, tc.port, got, tc.want)
+		}
+	}
+}
+
 func TestExtractListenPort(t *testing.T) {
 	cases := []struct {
 		in      string
