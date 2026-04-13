@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -117,6 +119,30 @@ func TestExtractListenPort(t *testing.T) {
 		}
 		if got != tc.want {
 			t.Errorf("extractListenPort(%q) = %d, want %d", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestPrivilegedPortHint(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		port int
+		want bool // true = expect a non-empty hint
+	}{
+		{"EACCES on 443", syscall.EACCES, 443, true},
+		{"EACCES on 80", syscall.EACCES, 80, true},
+		{"EACCES wrapped", &os.PathError{Op: "listen", Path: ":443", Err: syscall.EACCES}, 443, true},
+		{"EACCES on non-privileged", syscall.EACCES, 8443, false},
+		{"nil err", nil, 443, false},
+		{"unrelated err on 443", errors.New("connection reset"), 443, false},
+		{"permission denied string wrap", errors.New("listen tcp :443: permission denied"), 443, true},
+	}
+	for _, tc := range cases {
+		hint := privilegedPortHint(tc.err, tc.port)
+		got := hint != ""
+		if got != tc.want {
+			t.Errorf("%s: privilegedPortHint(...) = %q (present=%v), want present=%v", tc.name, hint, got, tc.want)
 		}
 	}
 }

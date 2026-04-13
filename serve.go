@@ -177,6 +177,11 @@ func runForegroundDaemon(opts startOptions) error {
 	if tlsCfg != nil {
 		ln, lerr := net.Listen("tcp", tlsCfg.Listen)
 		if lerr != nil {
+			if p, perr := extractListenPort(tlsCfg.Listen); perr == nil {
+				if hint := privilegedPortHint(lerr, p); hint != "" {
+					log.Print(hint)
+				}
+			}
 			return fmt.Errorf("hostmux start: listener: bind %s: %w", tlsCfg.Listen, lerr)
 		}
 		tlsLn = ln
@@ -486,4 +491,23 @@ func shouldWarnLocalhostPort(domain string, port int) bool {
 		return false
 	}
 	return hostnames.NormalizeDomain(domain) == "localhost"
+}
+
+// privilegedPortHint returns a user-facing hint line when a listener
+// failed to bind a privileged port (< 1024) due to a permission error.
+// The empty string means "no hint applies — let the caller log the raw
+// error as usual". Accepts wrapped errors via errors.Is and also matches
+// on "permission denied" substring for error wrappings that drop the
+// underlying syscall error.
+func privilegedPortHint(err error, port int) string {
+	if err == nil || port <= 0 || port >= 1024 {
+		return ""
+	}
+	if errors.Is(err, syscall.EACCES) || strings.Contains(err.Error(), "permission denied") {
+		return fmt.Sprintf(
+			"hostmux start: bind on :%d denied; privileged ports require root, CAP_NET_BIND_SERVICE, or a %d→8443 redirect. See README \"HTTPS on port 443\".",
+			port, port,
+		)
+	}
+	return ""
 }
