@@ -284,6 +284,110 @@ func TestURLCommandUsesDaemonDomainForBareHost(t *testing.T) {
 	}
 }
 
+func TestURLCommandIncludesPortFromDaemon(t *testing.T) {
+	sockDir, err := os.MkdirTemp("", "hm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	sockPath := filepath.Join(sockDir, "hostmux.sock")
+	errCh := make(chan error, 1)
+
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			errCh <- err
+			return
+		}
+		defer conn.Close()
+		if _, err := sockproto.NewDecoder(conn).Decode(); err != nil {
+			errCh <- err
+			return
+		}
+		errCh <- sockproto.NewEncoder(conn).Encode(&sockproto.Message{
+			Ok: true, Domain: "example.com", PublicPort: 8443,
+		})
+	}()
+
+	stdout, stderr, err := runURLAndCapture(t, urlOptions{
+		SocketPath: sockPath,
+		Names:      []string{"backend"},
+	})
+	if err != nil {
+		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)
+	}
+	if got, want := stdout, "https://backend.example.com:8443\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("server error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for server completion")
+	}
+}
+
+func TestURLCommandOmitsPortWhenDaemonOn443(t *testing.T) {
+	sockDir, err := os.MkdirTemp("", "hm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	sockPath := filepath.Join(sockDir, "hostmux.sock")
+	errCh := make(chan error, 1)
+
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			errCh <- err
+			return
+		}
+		defer conn.Close()
+		if _, err := sockproto.NewDecoder(conn).Decode(); err != nil {
+			errCh <- err
+			return
+		}
+		errCh <- sockproto.NewEncoder(conn).Encode(&sockproto.Message{
+			Ok: true, Domain: "localhost", PublicPort: 443,
+		})
+	}()
+
+	stdout, stderr, err := runURLAndCapture(t, urlOptions{
+		SocketPath: sockPath,
+		Names:      []string{"backend"},
+	})
+	if err != nil {
+		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)
+	}
+	if got, want := stdout, "https://backend.localhost\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("server error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for server completion")
+	}
+}
+
 func TestURLCommandPassesThroughBareHostWhenNoDomainAvailable(t *testing.T) {
 	stdout, stderr, err := runURLAndCapture(t, urlOptions{
 		SocketPath: filepath.Join(t.TempDir(), "missing.sock"),

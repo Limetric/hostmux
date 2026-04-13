@@ -52,15 +52,13 @@ func runURL(opts urlOptions) error {
 			fmt.Fprintf(os.Stderr, "hostmux url: %v; using bare host unchanged\n", err)
 		}
 	}
-	_ = daemonPort // wired up in Task 7
-
 	writer := opts.Writer
 	if writer == nil {
 		writer = os.Stdout
 	}
 
 	for _, host := range hosts {
-		if _, err := fmt.Fprintf(writer, "https://%s\n", host); err != nil {
+		if _, err := fmt.Fprintln(writer, formatPublicURL(host, "https", daemonPort)); err != nil {
 			return err
 		}
 	}
