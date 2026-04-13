@@ -35,6 +35,11 @@ type Options struct {
 	// (no TLS listener). When false, clients should use https:// for public
 	// URLs such as HOSTMUX_URL.
 	PlainHTTP bool
+
+	// PublicPort is the effective public TCP port the daemon's edge listens
+	// on. It is reported via OpInfo so clients can build accurate URLs.
+	// Zero means "unspecified"; clients should fall back to scheme default.
+	PublicPort int
 }
 
 // Server is the daemon-side Unix socket server. Each connection owns the
@@ -44,6 +49,7 @@ type Server struct {
 	onShutdown func()
 	domain     func() string
 	plainHTTP  bool
+	publicPort int
 
 	mu     sync.Mutex
 	ln     net.Listener
@@ -58,6 +64,7 @@ func New(r *router.Router, opts Options) *Server {
 		onShutdown: opts.OnShutdown,
 		domain:     opts.Domain,
 		plainHTTP:  opts.PlainHTTP,
+		publicPort: opts.PublicPort,
 	}
 }
 
@@ -150,7 +157,12 @@ func (s *Server) serveConn(c net.Conn) {
 				domain = s.domain()
 			}
 			publicHTTPS := !s.plainHTTP
-			_ = enc.Encode(&sockproto.Message{Ok: true, Domain: domain, PublicHTTPS: &publicHTTPS})
+			_ = enc.Encode(&sockproto.Message{
+				Ok:          true,
+				Domain:      domain,
+				PublicHTTPS: &publicHTTPS,
+				PublicPort:  s.publicPort,
+			})
 		case sockproto.OpBye:
 			_ = enc.Encode(&sockproto.Message{Ok: true})
 			return

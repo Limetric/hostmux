@@ -30,23 +30,22 @@ func resolveRequestedHosts(hosts []string, opts hostResolveOptions) ([]string, e
 	return hostnames.Expand(resolved, hostnames.NormalizeDomain(opts.Domain)), nil
 }
 
-func lookupDaemonDomain(sockPath string) (string, error) {
+func lookupDaemonInfo(sockPath string) (domain string, publicHTTPS bool, publicPort int, err error) {
 	conn, err := net.Dial("unix", sockPath)
 	if err != nil {
-		return "", fmt.Errorf("dial %s: %w", sockPath, err)
+		return "", true, 0, fmt.Errorf("dial %s: %w", sockPath, err)
 	}
 	defer conn.Close()
-
-	return lookupDaemonDomainClient(sockproto.NewEncoder(conn), sockproto.NewDecoder(conn))
+	return lookupDaemonInfoClient(sockproto.NewEncoder(conn), sockproto.NewDecoder(conn))
 }
 
-func lookupDaemonInfoClient(enc *sockproto.Encoder, dec *sockproto.Decoder) (daemonDomain string, publicHTTPS bool, err error) {
+func lookupDaemonInfoClient(enc *sockproto.Encoder, dec *sockproto.Decoder) (daemonDomain string, publicHTTPS bool, publicPort int, err error) {
 	if err := enc.Encode(&sockproto.Message{Op: sockproto.OpInfo}); err != nil {
-		return "", true, fmt.Errorf("info: %w", err)
+		return "", true, 0, fmt.Errorf("info: %w", err)
 	}
 	resp, err := dec.Decode()
 	if err != nil {
-		return "", true, fmt.Errorf("info response: %w", err)
+		return "", true, 0, fmt.Errorf("info response: %w", err)
 	}
 	publicHTTPS = true
 	if resp.PublicHTTPS != nil {
@@ -54,14 +53,9 @@ func lookupDaemonInfoClient(enc *sockproto.Encoder, dec *sockproto.Decoder) (dae
 	}
 	if !resp.Ok {
 		if resp.Error != "" {
-			return "", publicHTTPS, fmt.Errorf("daemon rejected info lookup: %s", resp.Error)
+			return "", publicHTTPS, 0, fmt.Errorf("daemon rejected info lookup: %s", resp.Error)
 		}
-		return "", publicHTTPS, fmt.Errorf("daemon rejected info lookup")
+		return "", publicHTTPS, 0, fmt.Errorf("daemon rejected info lookup")
 	}
-	return hostnames.NormalizeDomain(resp.Domain), publicHTTPS, nil
-}
-
-func lookupDaemonDomainClient(enc *sockproto.Encoder, dec *sockproto.Decoder) (string, error) {
-	domain, _, err := lookupDaemonInfoClient(enc, dec)
-	return domain, err
+	return hostnames.NormalizeDomain(resp.Domain), publicHTTPS, resp.PublicPort, nil
 }

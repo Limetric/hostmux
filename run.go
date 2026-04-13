@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"net/url"
 	"os"
 	"strings"
 
@@ -90,7 +89,7 @@ func runCommand(opts runOptions) error {
 	defer conn.Close()
 	enc := sockproto.NewEncoder(conn)
 	dec := sockproto.NewDecoder(conn)
-	daemonDomain, publicHTTPS, err := lookupDaemonInfoClient(enc, dec)
+	daemonDomain, publicHTTPS, daemonPort, err := lookupDaemonInfoClient(enc, dec)
 	if hostnames.HasBare(hosts) {
 		if err == nil {
 			hosts = hostnames.Expand(hosts, daemonDomain)
@@ -107,7 +106,7 @@ func runCommand(opts runOptions) error {
 	}
 	var publicURL string
 	if err == nil && len(hosts) > 0 {
-		publicURL = (&url.URL{Scheme: printScheme, Host: hosts[0]}).String()
+		publicURL = formatPublicURL(hosts[0], printScheme, daemonPort)
 	}
 	upstream := fmt.Sprintf("http://127.0.0.1:%d", port)
 	if err := enc.Encode(&sockproto.Message{Op: sockproto.OpRegister, Hosts: hosts, Upstream: upstream}); err != nil {
@@ -126,7 +125,7 @@ func runCommand(opts runOptions) error {
 
 	// Tell the user where to hit (full URL so terminals linkify it).
 	for _, h := range hosts {
-		edge := (&url.URL{Scheme: printScheme, Host: h}).String()
+		edge := formatPublicURL(h, printScheme, daemonPort)
 		fmt.Fprintf(os.Stderr, "→ %s → %s\n", edge, upstream)
 	}
 

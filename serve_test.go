@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -62,5 +64,85 @@ func TestResolveServeSocketPath_SocketFlagOverridesConfig(t *testing.T) {
 	}
 	if got != flagSock {
 		t.Fatalf("got %q want %q", got, flagSock)
+	}
+}
+
+func TestShouldWarnLocalhostPort(t *testing.T) {
+	cases := []struct {
+		name   string
+		domain string
+		port   int
+		want   bool
+	}{
+		{"localhost on 443", "localhost", 443, false},
+		{"localhost on 8443", "localhost", 8443, true},
+		{"localhost on 0 (parse failed)", "localhost", 0, false},
+		{"example.com on 8443", "example.com", 8443, false},
+		{"empty domain on 8443", "", 8443, false},
+		{"trailing dot localhost on 8443", "localhost.", 8443, true},
+	}
+	for _, tc := range cases {
+		got := shouldWarnLocalhostPort(tc.domain, tc.port)
+		if got != tc.want {
+			t.Errorf("%s: shouldWarnLocalhostPort(%q, %d) = %v, want %v", tc.name, tc.domain, tc.port, got, tc.want)
+		}
+	}
+}
+
+func TestExtractListenPort(t *testing.T) {
+	cases := []struct {
+		in      string
+		want    int
+		wantErr bool
+	}{
+		{":443", 443, false},
+		{":8443", 8443, false},
+		{"0.0.0.0:443", 443, false},
+		{"127.0.0.1:8443", 8443, false},
+		{"[::1]:8443", 8443, false},
+		{":0", 0, true},
+		{"", 0, true},
+		{"junk", 0, true},
+		{":notaport", 0, true},
+	}
+	for _, tc := range cases {
+		got, err := extractListenPort(tc.in)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("extractListenPort(%q) = %d, nil; want error", tc.in, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("extractListenPort(%q) error = %v", tc.in, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("extractListenPort(%q) = %d, want %d", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestPrivilegedPortHint(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		port int
+		want bool // true = expect a non-empty hint
+	}{
+		{"EACCES on 443", syscall.EACCES, 443, true},
+		{"EACCES on 80", syscall.EACCES, 80, true},
+		{"EACCES wrapped", &os.PathError{Op: "listen", Path: ":443", Err: syscall.EACCES}, 443, true},
+		{"EACCES on non-privileged", syscall.EACCES, 8443, false},
+		{"nil err", nil, 443, false},
+		{"unrelated err on 443", errors.New("connection reset"), 443, false},
+		{"permission denied string wrap", errors.New("listen tcp :443: permission denied"), 443, true},
+	}
+	for _, tc := range cases {
+		hint := privilegedPortHint(tc.err, tc.port)
+		got := hint != ""
+		if got != tc.want {
+			t.Errorf("%s: privilegedPortHint(...) = %q (present=%v), want present=%v", tc.name, hint, got, tc.want)
+		}
 	}
 }

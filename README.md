@@ -76,6 +76,82 @@ ingress:
       noTLSVerify: true
 ```
 
+## HTTPS on port 443
+
+Browsers treat `https://app.localhost` as port **443** by default. Hostmux
+ships with `listen = ":8443"` because binding `:443` usually requires
+extra privileges — but that means users have to type
+`https://app.localhost:8443`, which hurts the `*.localhost` workflow.
+If you want port-less URLs that match browser defaults, configure hostmux
+to listen on `:443` using one of the patterns below.
+
+When you do this, `hostmux url` and `hostmux run` automatically print
+URLs **without** the `:443` suffix, matching the browser's address bar.
+Stay on `:8443` and they include `:8443` so the URL is still clickable.
+
+### Linux
+
+The lightest touch is the `CAP_NET_BIND_SERVICE` capability. Grant it to
+the binary once; after that hostmux binds `:443` unprivileged:
+
+```sh
+sudo setcap cap_net_bind_service=+ep /path/to/hostmux
+```
+
+If you re-build or upgrade, re-run `setcap` — capabilities are attached
+to inodes, not paths.
+
+For systemd-managed installs, add the capability via unit config instead:
+
+```ini
+[Service]
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+```
+
+As a fallback, redirect `443 → 8443` with `iptables` or `nft` and keep
+hostmux on `:8443`:
+
+```sh
+sudo iptables -t nat -A OUTPUT -p tcp -o lo --dport 443 -j REDIRECT --to-ports 8443
+```
+
+### macOS
+
+macOS's packet filter can redirect `127.0.0.1:443 → 127.0.0.1:8443` so
+hostmux itself stays unprivileged. Because browsers on modern macOS
+usually resolve `*.localhost` to `::1` (IPv6 loopback), the anchor needs
+both IPv4 and IPv6 rules. Create `/etc/pf.anchors/hostmux` with:
+
+```
+rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1 port 8443
+rdr pass on lo0 inet6 proto tcp from any to ::1 port 443 -> ::1 port 8443
+```
+
+Add an anchor hook to `/etc/pf.conf`:
+
+```
+rdr-anchor "hostmux"
+load anchor "hostmux" from "/etc/pf.anchors/hostmux"
+```
+
+And enable it:
+
+```sh
+sudo pfctl -e
+sudo pfctl -f /etc/pf.conf
+```
+
+Alternative: run hostmux with elevated privileges. Not recommended for
+daily dev.
+
+### Windows
+
+Binding `:443` typically requires administrator privileges. Run hostmux
+from an elevated shell, or set up a local port redirect with `netsh`
+interface portproxy. Refer to Windows documentation for the exact
+invocation on your version.
+
 ## Example config with persistent routes
 
 Create a TOML config (default: `~/.config/hostmux/hostmux.toml`):

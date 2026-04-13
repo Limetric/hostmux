@@ -29,6 +29,11 @@ type TLSConfig struct {
 
 // Build returns the http.Servers that should be started. The caller is
 // responsible for calling Serve / ListenAndServeTLS as appropriate.
+//
+// Ordering contract: when both a plain and a TLS server are requested,
+// the plain server is first and the TLS server is last. Callers that
+// need to distinguish them positionally (e.g. to hand a pre-bound
+// listener to only the TLS server) rely on this contract.
 func Build(cfg Config, h http.Handler) ([]*http.Server, error) {
 	servers := make([]*http.Server, 0, 2)
 
