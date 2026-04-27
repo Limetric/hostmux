@@ -38,16 +38,30 @@ func runURL(opts urlOptions) error {
 	}
 
 	if hostnames.HasBare(hosts) {
+		var domain, daemonWarning string
 		sockPath, err := sockpath.Resolve(sockpath.Options{Flag: opts.SocketPath})
 		if err == nil {
-			domain, err := lookupDaemonDomain(sockPath)
-			if err == nil {
-				hosts = hostnames.Expand(hosts, domain)
+			d, lerr := lookupDaemonDomain(sockPath)
+			if lerr == nil {
+				domain = d
 			} else {
-				fmt.Fprintf(os.Stderr, "hostmux url: %v; using bare host unchanged\n", err)
+				daemonWarning = lerr.Error()
 			}
 		} else {
-			fmt.Fprintf(os.Stderr, "hostmux url: %v; using bare host unchanged\n", err)
+			daemonWarning = err.Error()
+		}
+
+		if domain == "" {
+			if d := readConfigDomain(defaultConfigPath()); d != "" {
+				domain = d
+				daemonWarning = ""
+			}
+		}
+
+		if domain != "" {
+			hosts = hostnames.Expand(hosts, domain)
+		} else if daemonWarning != "" {
+			fmt.Fprintf(os.Stderr, "hostmux url: %s; using bare host unchanged\n", daemonWarning)
 		}
 	}
 

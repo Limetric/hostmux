@@ -285,6 +285,61 @@ func TestURLCommandUsesDaemonDomainForBareHost(t *testing.T) {
 }
 
 func TestURLCommandPassesThroughBareHostWhenNoDomainAvailable(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	stdout, stderr, err := runURLAndCapture(t, urlOptions{
+		SocketPath: filepath.Join(t.TempDir(), "missing.sock"),
+		Names:      []string{"backend"},
+	})
+	if err != nil {
+		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)
+	}
+	if got, want := stdout, "https://backend\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if !strings.Contains(stderr, "using bare host unchanged") {
+		t.Fatalf("stderr = %q, want warning about bare host fallback", stderr)
+	}
+}
+
+func TestURLCommandFallsBackToConfigDomainWhenDaemonDown(t *testing.T) {
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	cfgDir := filepath.Join(cfgHome, "hostmux")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(cfgDir, "hostmux.toml")
+	if err := os.WriteFile(cfgPath, []byte(`domain = "example.com"`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := runURLAndCapture(t, urlOptions{
+		SocketPath: filepath.Join(t.TempDir(), "missing.sock"),
+		Names:      []string{"backend"},
+	})
+	if err != nil {
+		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)
+	}
+	if got, want := stdout, "https://backend.example.com\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if stderr != "" {
+		t.Fatalf("stderr = %q, want empty stderr", stderr)
+	}
+}
+
+func TestURLCommandConfigDomainIgnoredWhenNotSet(t *testing.T) {
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	cfgDir := filepath.Join(cfgHome, "hostmux")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(cfgDir, "hostmux.toml")
+	if err := os.WriteFile(cfgPath, []byte("listen = \":8443\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	stdout, stderr, err := runURLAndCapture(t, urlOptions{
 		SocketPath: filepath.Join(t.TempDir(), "missing.sock"),
 		Names:      []string{"backend"},
