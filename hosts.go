@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/BurntSushi/toml"
-
 	"github.com/Limetric/hostmux/internal/hostnames"
 	"github.com/Limetric/hostmux/internal/sockproto"
 )
@@ -66,20 +64,4 @@ func lookupDaemonInfoClient(enc *sockproto.Encoder, dec *sockproto.Decoder) (dae
 func lookupDaemonDomainClient(enc *sockproto.Encoder, dec *sockproto.Decoder) (string, error) {
 	domain, _, err := lookupDaemonInfoClient(enc, dec)
 	return domain, err
-}
-
-// readConfigDomain returns the raw `domain` value from the TOML file at path,
-// without applying daemon-side defaults like "localhost". Empty string on any
-// error or when the field is unset, so callers can treat it as "no signal".
-func readConfigDomain(path string) string {
-	if path == "" {
-		return ""
-	}
-	var raw struct {
-		Domain string `toml:"domain"`
-	}
-	if _, err := toml.DecodeFile(path, &raw); err != nil {
-		return ""
-	}
-	return hostnames.NormalizeDomain(raw.Domain)
 }

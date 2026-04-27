@@ -328,6 +328,97 @@ func TestURLCommandFallsBackToConfigDomainWhenDaemonDown(t *testing.T) {
 	}
 }
 
+func TestURLCommandDaemonDomainWinsOverConfigDomain(t *testing.T) {
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	cfgDir := filepath.Join(cfgHome, "hostmux")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(cfgDir, "hostmux.toml")
+	if err := os.WriteFile(cfgPath, []byte(`domain = "config.example.com"`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sockDir, err := os.MkdirTemp("", "hm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	sockPath := filepath.Join(sockDir, "hostmux.sock")
+	errCh := make(chan error, 1)
+
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			errCh <- err
+			return
+		}
+		defer conn.Close()
+		if _, err := sockproto.NewDecoder(conn).Decode(); err != nil {
+			errCh <- err
+			return
+		}
+		errCh <- sockproto.NewEncoder(conn).Encode(&sockproto.Message{Ok: true, Domain: "daemon.example.com"})
+	}()
+
+	stdout, stderr, err := runURLAndCapture(t, urlOptions{
+		SocketPath: sockPath,
+		Names:      []string{"backend"},
+	})
+	if err != nil {
+		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)
+	}
+	if got, want := stdout, "https://backend.daemon.example.com\n"; got != want {
+		t.Fatalf("stdout = %q, want %q (daemon should win over config)", got, want)
+	}
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("server error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for server completion")
+	}
+}
+
+func TestURLCommandWarnsWhenConfigUnparseable(t *testing.T) {
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	cfgDir := filepath.Join(cfgHome, "hostmux")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(cfgDir, "hostmux.toml")
+	if err := os.WriteFile(cfgPath, []byte("listen = \n[[[not toml\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := runURLAndCapture(t, urlOptions{
+		SocketPath: filepath.Join(t.TempDir(), "missing.sock"),
+		Names:      []string{"backend"},
+	})
+	if err != nil {
+		t.Fatalf("runURL error = %v, stderr = %q", err, stderr)
+	}
+	if got, want := stdout, "https://backend\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if !strings.Contains(stderr, "read config") {
+		t.Fatalf("stderr = %q, want warning about config parse failure", stderr)
+	}
+	if !strings.Contains(stderr, "using bare host unchanged") {
+		t.Fatalf("stderr = %q, want bare-host fallback notice", stderr)
+	}
+}
+
 func TestURLCommandConfigDomainIgnoredWhenNotSet(t *testing.T) {
 	cfgHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfgHome)

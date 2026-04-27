@@ -16,10 +16,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/BurntSushi/toml"
+
 	"github.com/Limetric/hostmux/internal/config"
 	"github.com/Limetric/hostmux/internal/daemon"
 	"github.com/Limetric/hostmux/internal/daemonctl"
 	"github.com/Limetric/hostmux/internal/filelock"
+	"github.com/Limetric/hostmux/internal/hostnames"
 	"github.com/Limetric/hostmux/internal/listener"
 	"github.com/Limetric/hostmux/internal/proxy"
 	"github.com/Limetric/hostmux/internal/router"
@@ -339,6 +342,30 @@ func defaultConfigPath() string {
 		return filepath.Join(home, ".config", "hostmux", "hostmux.toml")
 	}
 	return ""
+}
+
+// readConfigDomain returns the raw `domain` field from the TOML file at path.
+// A missing file is treated as "no signal" (returns "", nil) so callers can
+// silently fall back. A parse error is returned to the caller so it can warn
+// the user — a broken config that intended to set a domain is actionable.
+//
+// We deliberately avoid config.Load: it applies the daemon-side default
+// `domain = "localhost"` to a config that didn't set the field, which would
+// turn "no domain configured" into spurious "myapp.localhost" expansion.
+func readConfigDomain(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	var raw struct {
+		Domain string `toml:"domain"`
+	}
+	if _, err := toml.DecodeFile(path, &raw); err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return hostnames.NormalizeDomain(raw.Domain), nil
 }
 
 // acquirePIDLock attempts to take an exclusive flock on the PID file. It

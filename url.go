@@ -38,7 +38,7 @@ func runURL(opts urlOptions) error {
 	}
 
 	if hostnames.HasBare(hosts) {
-		var domain, daemonWarning string
+		var domain, daemonWarning, configWarning string
 		sockPath, err := sockpath.Resolve(sockpath.Options{Flag: opts.SocketPath})
 		if err == nil {
 			d, lerr := lookupDaemonDomain(sockPath)
@@ -52,7 +52,11 @@ func runURL(opts urlOptions) error {
 		}
 
 		if domain == "" {
-			if d := readConfigDomain(defaultConfigPath()); d != "" {
+			d, cerr := readConfigDomain(defaultConfigPath())
+			if cerr != nil {
+				configWarning = cerr.Error()
+			}
+			if d != "" {
 				domain = d
 				daemonWarning = ""
 			}
@@ -60,6 +64,8 @@ func runURL(opts urlOptions) error {
 
 		if domain != "" {
 			hosts = hostnames.Expand(hosts, domain)
+		} else if configWarning != "" {
+			fmt.Fprintf(os.Stderr, "hostmux url: read config: %s; using bare host unchanged\n", configWarning)
 		} else if daemonWarning != "" {
 			fmt.Fprintf(os.Stderr, "hostmux url: %s; using bare host unchanged\n", daemonWarning)
 		}
