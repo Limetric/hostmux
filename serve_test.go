@@ -64,3 +64,66 @@ func TestResolveServeSocketPath_SocketFlagOverridesConfig(t *testing.T) {
 		t.Fatalf("got %q want %q", got, flagSock)
 	}
 }
+
+func TestReadConfigDomain_EmptyPathReturnsEmpty(t *testing.T) {
+	got, err := readConfigDomain("")
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if got != "" {
+		t.Fatalf("got %q, want empty", got)
+	}
+}
+
+func TestReadConfigDomain_MissingFileIsNotAnError(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "nope.toml")
+	got, err := readConfigDomain(missing)
+	if err != nil {
+		t.Fatalf("err = %v, want nil for missing file", err)
+	}
+	if got != "" {
+		t.Fatalf("got %q, want empty", got)
+	}
+}
+
+func TestReadConfigDomain_MalformedTOMLReturnsError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "broken.toml")
+	if err := os.WriteFile(path, []byte("listen = \n[[[not toml\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readConfigDomain(path)
+	if err == nil {
+		t.Fatal("err = nil, want parse error")
+	}
+	if got != "" {
+		t.Fatalf("got %q, want empty on parse error", got)
+	}
+}
+
+func TestReadConfigDomain_DomainUnsetReturnsEmpty(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "no-domain.toml")
+	if err := os.WriteFile(path, []byte("listen = \":8443\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readConfigDomain(path)
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if got != "" {
+		t.Fatalf("got %q, want empty when domain unset (no localhost default leak)", got)
+	}
+}
+
+func TestReadConfigDomain_NormalizesValue(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "normalize.toml")
+	if err := os.WriteFile(path, []byte(`domain = "  example.com.  "`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readConfigDomain(path)
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if got != "example.com" {
+		t.Fatalf("got %q, want %q", got, "example.com")
+	}
+}
