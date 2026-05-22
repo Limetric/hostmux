@@ -182,15 +182,22 @@ func runForegroundDaemon(opts startOptions) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Start HTTP servers.
+	// Start HTTP servers. Bind synchronously so startup failures are returned
+	// to the foreground caller instead of being reduced to a clean shutdown.
+	httpErrCh := make(chan error, len(servers))
 	for _, srv := range servers {
-		go func() {
-			serr := srv.ListenAndServeTLS(tlsCfg.CertFile, tlsCfg.KeyFile)
+		ln, err := net.Listen("tcp", srv.Addr)
+		if err != nil {
+			return fmt.Errorf("hostmux start: listener %s: %w", srv.Addr, err)
+		}
+		go func(srv *http.Server, ln net.Listener) {
+			serr := srv.ServeTLS(ln, tlsCfg.CertFile, tlsCfg.KeyFile)
 			if serr != nil && serr != http.ErrServerClosed {
 				log.Printf("http server: %v", serr)
+				httpErrCh <- serr
 				cancel()
 			}
-		}()
+		}(srv, ln)
 	}
 	log.Printf("hostmux start: TLS listening on %s", tlsCfg.Listen)
 	if generatedTLS {
@@ -236,9 +243,15 @@ func runForegroundDaemon(opts startOptions) error {
 	// Wait for signals.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
+	var runErr error
 	select {
 	case <-sigCh:
+	case runErr = <-httpErrCh:
 	case <-ctx.Done():
+		select {
+		case runErr = <-httpErrCh:
+		default:
+		}
 	}
 	log.Printf("hostmux start: shutting down")
 
@@ -255,6 +268,9 @@ func runForegroundDaemon(opts startOptions) error {
 	// file, create one, and acquire its lock — all between our os.Remove
 	// and our process exit. The next daemon will simply truncate and
 	// rewrite it under its own flock.
+	if runErr != nil {
+		return fmt.Errorf("hostmux start: http server: %w", runErr)
+	}
 	return nil
 }
 
