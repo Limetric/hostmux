@@ -8,6 +8,8 @@ package config
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -88,6 +90,23 @@ func (c *Config) validate() error {
 		if app.Upstream == "" {
 			return fmt.Errorf("config: app[%d]: upstream must be non-empty", i)
 		}
+		if err := validateUpstreamURL(app.Upstream); err != nil {
+			return fmt.Errorf("config: app[%d]: %w", i, err)
+		}
+	}
+	return nil
+}
+
+func validateUpstreamURL(raw string) error {
+	if strings.TrimSpace(raw) != raw {
+		return fmt.Errorf("upstream must not contain surrounding whitespace")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("upstream must be a valid URL: %w", err)
+	}
+	if u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("upstream must be an absolute http or https URL")
 	}
 	return nil
 }
