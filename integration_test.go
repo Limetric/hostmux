@@ -290,6 +290,45 @@ func TestURLInheritsDomainFromDaemonConfig(t *testing.T) {
 	}
 }
 
+func TestRunAutoStartUsesConfigSocket(t *testing.T) {
+	env, home := isolatedHostmuxEnv(t)
+
+	binDir := t.TempDir()
+	bin := filepath.Join(binDir, "hostmux")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+
+	sockDir, err := os.MkdirTemp("", "hm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(sockDir) })
+	sockPath := filepath.Join(sockDir, "t.sock")
+
+	cfgDir := filepath.Join(home, ".config", "hostmux")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgBody := fmt.Sprintf("listen = \"127.0.0.1:0\"\nsocket = %q\ndomain = \"example.com\"\n", sockPath)
+	if err := os.WriteFile(filepath.Join(cfgDir, "hostmux.toml"), []byte(cfgBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.Command(bin, "run", "--name", "api", "--", "/usr/bin/true")
+	run.Env = env
+	out, err := run.CombinedOutput()
+	t.Cleanup(func() {
+		stop := exec.Command(bin, "stop", "--socket", sockPath)
+		stop.Env = env
+		_ = stop.Run()
+	})
+	if err != nil {
+		t.Fatalf("run: %v\n%s", err, out)
+	}
+}
+
 func waitForSocket(t *testing.T, path string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)

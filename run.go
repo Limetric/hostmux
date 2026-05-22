@@ -53,7 +53,7 @@ func runCommand(opts runOptions) error {
 
 	// Resolve socket path and ensure daemon is running.
 	sockOpts := sockpath.Options{Flag: opts.SocketPath}
-	sockPath, err := sockpath.Resolve(sockOpts)
+	sockPath, err := resolveRunSocketPath(opts.SocketPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hostmux run: %v\n", err)
 		return exitError{code: 1}
@@ -148,6 +148,34 @@ func runCommand(opts runOptions) error {
 		return exitError{code: code}
 	}
 	return nil
+}
+
+func resolveRunSocketPath(socketFlag string) (string, error) {
+	sockOpts := sockpath.Options{Flag: socketFlag}
+	if sockpath.IsExplicit(sockOpts) {
+		return sockpath.Resolve(sockOpts)
+	}
+
+	resolved, err := sockpath.Resolve(sockOpts)
+	if err != nil {
+		return "", err
+	}
+	defaultSock, err := sockpath.DefaultSocket()
+	if err != nil {
+		return "", err
+	}
+	if resolved != defaultSock {
+		return resolved, nil
+	}
+
+	cfg, err := loadOptionalConfig(defaultConfigPath())
+	if err != nil {
+		return "", err
+	}
+	if cfg == nil || cfg.Socket == "" {
+		return resolved, nil
+	}
+	return sockpath.ResolveServe(sockpath.Options{ConfigSocket: cfg.Socket})
 }
 
 func validateExplicitNames(names []string) error {
