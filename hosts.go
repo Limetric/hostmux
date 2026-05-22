@@ -19,6 +19,9 @@ func resolveRequestedHosts(hosts []string, opts hostResolveOptions) ([]string, e
 	if err != nil {
 		return nil, err
 	}
+	if err := validateResolvedPrefix(prefix); err != nil {
+		return nil, err
+	}
 
 	resolved := append([]string(nil), hosts...)
 	if prefix != "" {

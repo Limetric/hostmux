@@ -49,6 +49,19 @@ func TestResolveRequestedHosts_AppliesPrefixBeforeExpansion(t *testing.T) {
 	}
 }
 
+func TestResolveRequestedHosts_RejectsInvalidPrefix(t *testing.T) {
+	_, err := resolveRequestedHosts([]string{"svc"}, hostResolveOptions{
+		Domain: "x.test",
+		Prefix: "feature_x",
+	})
+	if err == nil {
+		t.Fatal("expected invalid prefix error")
+	}
+	if !strings.Contains(err.Error(), "prefix") {
+		t.Fatalf("error = %v, want prefix", err)
+	}
+}
+
 func TestResolveRequestedHosts_NoPrefixFlagSkipsWorktreePrefix(t *testing.T) {
 	got, err := resolveRequestedHosts([]string{"api"}, hostResolveOptions{
 		Domain:   "app.local",
