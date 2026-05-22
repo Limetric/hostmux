@@ -6,9 +6,11 @@ package sockpath
 
 import (
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Limetric/hostmux/internal/filelock"
 )
@@ -129,7 +131,10 @@ func readDiscovery() (string, bool) {
 }
 
 func discoveryAlive(sockPath string) bool {
-	if _, err := os.Stat(sockPath); err == nil {
+	d := net.Dialer{Timeout: 100 * time.Millisecond}
+	conn, err := d.Dial("unix", sockPath)
+	if err == nil {
+		_ = conn.Close()
 		return true
 	}
 

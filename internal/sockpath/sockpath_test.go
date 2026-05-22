@@ -1,6 +1,7 @@
 package sockpath
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -41,10 +42,17 @@ func TestResolveReadsDiscoveryFile(t *testing.T) {
 	t.Setenv("HOSTMUX_SOCKET", "")
 	t.Setenv("XDG_RUNTIME_DIR", "")
 
-	discovered := filepath.Join(t.TempDir(), "custom.sock")
-	if err := os.WriteFile(discovered, nil, 0o644); err != nil {
+	sockDir, err := os.MkdirTemp("", "hm")
+	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	discovered := filepath.Join(sockDir, "custom.sock")
+	ln, err := net.Listen("unix", discovered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
 
 	hostmuxDir := filepath.Join(tmp, ".hostmux")
 	os.MkdirAll(hostmuxDir, 0o755)
@@ -68,6 +76,40 @@ func TestResolveIgnoresStaleDiscoveryFile(t *testing.T) {
 	}
 	discoveryPath := filepath.Join(hostmuxDir, "socket")
 	if err := os.WriteFile(discoveryPath, []byte("/missing/custom.sock\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Resolve(Options{})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	want := filepath.Join(tmp, ".hostmux", "hostmux.sock")
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+	if _, err := os.Stat(discoveryPath); !os.IsNotExist(err) {
+		t.Fatalf("stale discovery file still present, stat err=%v", err)
+	}
+}
+
+func TestResolveIgnoresDiscoveryRegularFile(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("HOSTMUX_SOCKET", "")
+	t.Setenv("XDG_RUNTIME_DIR", "")
+
+	staleDir := t.TempDir()
+	discovered := filepath.Join(staleDir, "not-a-socket.sock")
+	if err := os.WriteFile(discovered, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	hostmuxDir := filepath.Join(tmp, ".hostmux")
+	if err := os.MkdirAll(hostmuxDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	discoveryPath := filepath.Join(hostmuxDir, "socket")
+	if err := os.WriteFile(discoveryPath, []byte(discovered+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
