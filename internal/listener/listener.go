@@ -8,7 +8,6 @@ import (
 	"net/http"
 
 	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 )
 
 // Config configures the daemon's HTTP listeners.
@@ -33,10 +32,14 @@ func Build(cfg Config, h http.Handler) ([]*http.Server, error) {
 	servers := make([]*http.Server, 0, 2)
 
 	if cfg.Plain != "" {
-		servers = append(servers, &http.Server{
+		plainSrv := &http.Server{
 			Addr:    cfg.Plain,
-			Handler: h2c.NewHandler(h, &http2.Server{}),
-		})
+			Handler: h,
+		}
+		plainSrv.Protocols = new(http.Protocols)
+		plainSrv.Protocols.SetHTTP1(true)
+		plainSrv.Protocols.SetUnencryptedHTTP2(true)
+		servers = append(servers, plainSrv)
 	}
 
 	if cfg.TLS != nil {

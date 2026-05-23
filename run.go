@@ -196,7 +196,7 @@ func isValidHostToken(name string) bool {
 		return false
 	}
 	if strings.HasPrefix(name, "[") || strings.HasSuffix(name, "]") {
-		if !strings.HasPrefix(name, "[") || !strings.HasSuffix(name, "]") {
+		if !(strings.HasPrefix(name, "[") && strings.HasSuffix(name, "]")) {
 			return false
 		}
 		inner := strings.TrimPrefix(strings.TrimSuffix(name, "]"), "[")
@@ -266,8 +266,6 @@ func sanitizeWorktreePrefix(prefix string) string {
 		switch {
 		case isAlphaNum || r == '-':
 			b.WriteRune(r)
-		case r == '_' || r == '.':
-			b.WriteRune('-')
 		default:
 			b.WriteRune('-')
 		}

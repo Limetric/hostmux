@@ -790,11 +790,12 @@ func isolatedHostmuxEnv(t *testing.T) ([]string, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(home) })
-	env := make([]string, 0, len(os.Environ())+3)
+	env := make([]string, 0, len(os.Environ())+4)
 	for _, entry := range os.Environ() {
 		switch {
 		case strings.HasPrefix(entry, "HOME="):
 		case strings.HasPrefix(entry, "XDG_RUNTIME_DIR="):
+		case strings.HasPrefix(entry, "XDG_CONFIG_HOME="):
 		case strings.HasPrefix(entry, "HOSTMUX_SOCKET="):
 		default:
 			env = append(env, entry)
@@ -803,6 +804,7 @@ func isolatedHostmuxEnv(t *testing.T) ([]string, string) {
 	env = append(env,
 		"HOME="+home,
 		"XDG_RUNTIME_DIR=",
+		"XDG_CONFIG_HOME=",
 		"HOSTMUX_SOCKET=",
 	)
 	return env, home

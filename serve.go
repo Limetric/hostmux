@@ -185,11 +185,19 @@ func runForegroundDaemon(opts startOptions) error {
 	// Start HTTP servers. Bind synchronously so startup failures are returned
 	// to the foreground caller instead of being reduced to a clean shutdown.
 	httpErrCh := make(chan error, len(servers))
+	listeners := make([]net.Listener, 0, len(servers))
 	for _, srv := range servers {
 		ln, err := net.Listen("tcp", srv.Addr)
 		if err != nil {
+			for _, open := range listeners {
+				_ = open.Close()
+			}
 			return fmt.Errorf("hostmux start: listener %s: %w", srv.Addr, err)
 		}
+		listeners = append(listeners, ln)
+	}
+	for i, srv := range servers {
+		ln := listeners[i]
 		go func(srv *http.Server, ln net.Listener) {
 			serr := srv.ServeTLS(ln, tlsCfg.CertFile, tlsCfg.KeyFile)
 			if serr != nil && serr != http.ErrServerClosed {

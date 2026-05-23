@@ -2,15 +2,12 @@ package listener
 
 import (
 	"context"
-	"crypto/tls"
 	"io"
 	"net"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
-
-	"golang.org/x/net/http2"
 )
 
 func okHandler() http.Handler {
@@ -57,14 +54,14 @@ func TestPlainListenerSpeaksH2C(t *testing.T) {
 	go servers[0].Serve(ln)
 	defer servers[0].Shutdown(context.Background())
 
-	// HTTP/2 client over plain TCP (h2c).
+	// HTTP/2 client over plain TCP (prior-knowledge h2c).
 	client := &http.Client{
-		Transport: &http2.Transport{
-			AllowHTTP: true,
-			DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
-				var d net.Dialer
-				return d.DialContext(ctx, network, addr)
-			},
+		Transport: &http.Transport{
+			Protocols: func() *http.Protocols {
+				p := new(http.Protocols)
+				p.SetUnencryptedHTTP2(true)
+				return p
+			}(),
 		},
 		Timeout: 5 * time.Second,
 	}

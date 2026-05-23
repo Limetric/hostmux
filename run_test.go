@@ -713,6 +713,7 @@ func TestResolveRunSocketPathPrefersLiveDiscoveryOverConfig(t *testing.T) {
 	t.Setenv("HOME", tmp)
 	t.Setenv("HOSTMUX_SOCKET", "")
 	t.Setenv("XDG_RUNTIME_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
 
 	sockDir, err := os.MkdirTemp("", "hm")
 	if err != nil {
@@ -757,6 +758,7 @@ func TestResolveRunSocketPathUsesConfigWhenNoLiveDiscovery(t *testing.T) {
 	t.Setenv("HOME", tmp)
 	t.Setenv("HOSTMUX_SOCKET", "")
 	t.Setenv("XDG_RUNTIME_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
 
 	cfgDir := filepath.Join(tmp, ".config", "hostmux")
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
