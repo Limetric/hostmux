@@ -64,11 +64,13 @@ func TestResolveRequestedHosts_RejectsInvalidExplicitPrefix(t *testing.T) {
 
 func TestSanitizeWorktreePrefix(t *testing.T) {
 	cases := map[string]string{
-		"feature_x":     "feature-x",
-		"my.branch":     "my-branch",
-		"chatter-modem": "chatter-modem",
-		"___":           "worktree",
-		"":              "",
+		"feature_x":                         "feature-x",
+		"my.branch":                         "my-branch",
+		"chatter-modem":                     "chatter-modem",
+		"___":                               "worktree",
+		"":                                  "",
+		"a" + strings.Repeat("b", 63):       "a" + strings.Repeat("b", 62),
+		"a" + strings.Repeat("-", 62) + "b": "a",
 	}
 	for in, want := range cases {
 		if got := sanitizeWorktreePrefix(in); got != want {

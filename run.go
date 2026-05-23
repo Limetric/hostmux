@@ -230,9 +230,6 @@ func sanitizeWorktreePrefix(prefix string) string {
 	runes := []rune(s)
 	if len(runes) > 63 {
 		s = strings.Trim(string(runes[:63]), "-")
-		if s == "" {
-			return "worktree"
-		}
 	}
 	return s
 }
