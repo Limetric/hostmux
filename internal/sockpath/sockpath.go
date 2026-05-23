@@ -149,7 +149,10 @@ func discoveryAlive(sockPath string) bool {
 	}
 
 	pidPath := PIDFilePathFor(sockPath)
-	f, err := os.OpenFile(pidPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if _, err := os.Stat(pidPath); err != nil {
+		return false
+	}
+	f, err := os.Open(pidPath)
 	if err != nil {
 		return false
 	}

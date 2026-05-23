@@ -254,6 +254,10 @@ func runForegroundDaemon(opts startOptions) error {
 	var runErr error
 	select {
 	case <-sigCh:
+		select {
+		case runErr = <-httpErrCh:
+		default:
+		}
 	case runErr = <-httpErrCh:
 	case <-ctx.Done():
 		select {

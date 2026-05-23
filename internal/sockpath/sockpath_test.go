@@ -175,6 +175,29 @@ func TestResolveIgnoresDiscoveryRegularFile(t *testing.T) {
 	}
 }
 
+func TestDiscoveryAliveDoesNotCreatePIDFile(t *testing.T) {
+	sockDir, err := os.MkdirTemp("", "hm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+
+	sockPath := filepath.Join(sockDir, "dead.sock")
+	if err := os.WriteFile(sockPath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pidPath := PIDFilePathFor(sockPath)
+
+	if discoveryAlive(sockPath) {
+		t.Fatal("expected dead socket to be not alive")
+	}
+	if _, err := os.Stat(pidPath); err == nil {
+		t.Fatalf("pid file %q should not have been created", pidPath)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat pid file: %v", err)
+	}
+}
+
 func TestResolveEnvOverridesDiscoveryFile(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)

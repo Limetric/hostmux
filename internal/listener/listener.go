@@ -1,7 +1,8 @@
 // Package listener builds the HTTP servers the hostmux daemon listens on.
-// Optionally returns a plain HTTP/1.1 + h2c listener for direct clients.
-// Optionally also returns a TLS listener that negotiates HTTP/2 via ALPN for
-// origins such as cloudflared that require HTTPS for HTTP/2-to-origin.
+// Optionally returns a plain HTTP/1.1 + unencrypted HTTP/2 listener for
+// direct clients. Optionally also returns a TLS listener that negotiates
+// HTTP/2 via ALPN for origins such as cloudflared that require HTTPS for
+// HTTP/2-to-origin.
 package listener
 
 import (
@@ -12,7 +13,7 @@ import (
 
 // Config configures the daemon's HTTP listeners.
 type Config struct {
-	// Plain is the optional listen address for the HTTP/1.1 + h2c listener.
+	// Plain is the optional listen address for the HTTP/1.1 + unencrypted HTTP/2 listener.
 	Plain string
 	// TLS, if non-nil, enables an HTTP/1.1 + HTTP/2 listener on the configured
 	// TLS port.

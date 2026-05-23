@@ -316,32 +316,45 @@ func TestRunAutoStartUsesConfigSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	run := exec.Command(bin, "run", "--name", "api", "--", "/usr/bin/true")
+	run := exec.Command(bin, "run", "--name", "api", "--", "/bin/sh", "-c", "sleep 2")
 	run.Env = env
-	out, err := run.CombinedOutput()
+	run.Stdout = testWriter{t}
+	run.Stderr = testWriter{t}
+	if err := run.Start(); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
 	t.Cleanup(func() {
 		stop := exec.Command(bin, "stop", "--socket", sockPath)
 		stop.Env = env
 		_ = stop.Run()
 	})
-	if err != nil {
-		t.Fatalf("run: %v\n%s", err, out)
-	}
+
+	waitForSocket(t, sockPath, 5*time.Second)
 
 	defaultSock := filepath.Join(home, ".hostmux", "hostmux.sock")
 	if _, err := os.Stat(defaultSock); err == nil {
+		_ = run.Process.Kill()
+		_ = run.Wait()
 		t.Fatalf("default socket %q exists; expected custom socket only", defaultSock)
 	}
 
-	routes := exec.Command(bin, "routes", "--socket", sockPath)
-	routes.Env = env
-	routesOut, err := routes.CombinedOutput()
-	if err != nil {
-		t.Fatalf("routes on custom socket: %v\n%s", err, routesOut)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		routes := exec.Command(bin, "routes", "--socket", sockPath)
+		routes.Env = env
+		routesOut, err := routes.CombinedOutput()
+		if err == nil && strings.Contains(string(routesOut), "api.example.com") {
+			if err := run.Wait(); err != nil {
+				t.Fatalf("run wait: %v", err)
+			}
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-	if !strings.Contains(string(routesOut), "api.example.com") {
-		t.Fatalf("routes output = %q, want api.example.com", routesOut)
-	}
+
+	_ = run.Process.Kill()
+	_ = run.Wait()
+	t.Fatal("registered route did not appear on custom socket")
 }
 
 func waitForSocket(t *testing.T, path string, timeout time.Duration) {

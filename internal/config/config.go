@@ -87,6 +87,11 @@ func (c *Config) validate() error {
 		if len(app.Hosts) == 0 {
 			return fmt.Errorf("config: app[%d]: hosts must be non-empty", i)
 		}
+		for j, host := range app.Hosts {
+			if !hostnames.ValidHostToken(host) {
+				return fmt.Errorf("config: app[%d]: hosts[%d]: must be a valid hostname", i, j)
+			}
+		}
 		if app.Upstream == "" {
 			return fmt.Errorf("config: app[%d]: upstream must be non-empty", i)
 		}

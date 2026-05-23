@@ -67,6 +67,7 @@ func TestSanitizeWorktreePrefix(t *testing.T) {
 		"feature_x":     "feature-x",
 		"my.branch":     "my-branch",
 		"chatter-modem": "chatter-modem",
+		"___":           "worktree",
 		"":              "",
 	}
 	for in, want := range cases {

@@ -174,7 +174,7 @@ func validateExplicitNames(names []string) error {
 		if name == "" {
 			return fmt.Errorf("--name must be non-empty")
 		}
-		if !isValidHostToken(name) {
+		if !hostnames.ValidHostToken(name) {
 			return fmt.Errorf("--name must be a valid bare label, hostname, or IP literal")
 		}
 	}
@@ -185,57 +185,10 @@ func validateResolvedPrefix(prefix string) error {
 	if prefix == "" {
 		return nil
 	}
-	if !isValidDNSLabel(prefix) {
+	if !hostnames.ValidDNSLabel(prefix) {
 		return fmt.Errorf("prefix must be a valid DNS label")
 	}
 	return nil
-}
-
-func isValidHostToken(name string) bool {
-	if name == "" || strings.TrimSpace(name) != name {
-		return false
-	}
-	if strings.HasPrefix(name, "[") || strings.HasSuffix(name, "]") {
-		if !(strings.HasPrefix(name, "[") && strings.HasSuffix(name, "]")) {
-			return false
-		}
-		inner := strings.TrimPrefix(strings.TrimSuffix(name, "]"), "[")
-		return strings.Contains(inner, ":") && net.ParseIP(inner) != nil
-	}
-	// Bare IPv6 literals (e.g. ::1) are rejected; use bracketed form ([::1]).
-	if strings.Contains(name, ":") {
-		return false
-	}
-	if ip := net.ParseIP(name); ip != nil {
-		return ip.To4() != nil
-	}
-	if len(name) > 253 {
-		return false
-	}
-	labels := strings.Split(name, ".")
-	for _, label := range labels {
-		if !isValidDNSLabel(label) {
-			return false
-		}
-	}
-	return true
-}
-
-func isValidDNSLabel(label string) bool {
-	if label == "" || len(label) > 63 {
-		return false
-	}
-	runes := []rune(label)
-	for i, r := range runes {
-		isAlphaNum := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
-		switch {
-		case isAlphaNum:
-		case r == '-' && i != 0 && i != len(runes)-1:
-		default:
-			return false
-		}
-	}
-	return true
 }
 
 func resolvePrefix(flagValue string, disable bool) (prefix string, explicit bool, err error) {
@@ -270,5 +223,16 @@ func sanitizeWorktreePrefix(prefix string) string {
 			b.WriteRune('-')
 		}
 	}
-	return strings.Trim(b.String(), "-")
+	s := strings.Trim(b.String(), "-")
+	if s == "" {
+		return "worktree"
+	}
+	runes := []rune(s)
+	if len(runes) > 63 {
+		s = strings.Trim(string(runes[:63]), "-")
+		if s == "" {
+			return "worktree"
+		}
+	}
+	return s
 }
