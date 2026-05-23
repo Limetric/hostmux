@@ -119,6 +119,32 @@ upstream = "127.0.0.1:8080"
 	}
 }
 
+func TestLoadRejectsAppWithWhitespaceUpstream(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hostmux.toml")
+	writeFile(t, path, `
+[[app]]
+hosts = ["a.local"]
+upstream = "  http://127.0.0.1:8080/  "
+`)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error")
+	}
+}
+
+func TestLoadAcceptsUppercaseUpstreamScheme(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hostmux.toml")
+	writeFile(t, path, `
+[[app]]
+hosts = ["a.local"]
+upstream = "HTTP://127.0.0.1:8080"
+`)
+	if _, err := Load(path); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+}
+
 func TestLoadMissingFileReturnsError(t *testing.T) {
 	if _, err := Load(filepath.Join(t.TempDir(), "nope.toml")); err == nil {
 		t.Fatal("expected error")

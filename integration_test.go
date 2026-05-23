@@ -327,6 +327,21 @@ func TestRunAutoStartUsesConfigSocket(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v\n%s", err, out)
 	}
+
+	defaultSock := filepath.Join(home, ".hostmux", "hostmux.sock")
+	if _, err := os.Stat(defaultSock); err == nil {
+		t.Fatalf("default socket %q exists; expected custom socket only", defaultSock)
+	}
+
+	routes := exec.Command(bin, "routes", "--socket", sockPath)
+	routes.Env = env
+	routesOut, err := routes.CombinedOutput()
+	if err != nil {
+		t.Fatalf("routes on custom socket: %v\n%s", err, routesOut)
+	}
+	if !strings.Contains(string(routesOut), "api.example.com") {
+		t.Fatalf("routes output = %q, want api.example.com", routesOut)
+	}
 }
 
 func waitForSocket(t *testing.T, path string, timeout time.Duration) {

@@ -15,12 +15,14 @@ type hostResolveOptions struct {
 }
 
 func resolveRequestedHosts(hosts []string, opts hostResolveOptions) ([]string, error) {
-	prefix, err := resolvePrefix(opts.Prefix, opts.NoPrefix)
+	prefix, explicitPrefix, err := resolvePrefix(opts.Prefix, opts.NoPrefix)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateResolvedPrefix(prefix); err != nil {
-		return nil, err
+	if explicitPrefix {
+		if err := validateResolvedPrefix(prefix); err != nil {
+			return nil, err
+		}
 	}
 
 	resolved := append([]string(nil), hosts...)

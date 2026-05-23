@@ -52,13 +52,12 @@ func runCommand(opts runOptions) error {
 	}
 
 	// Resolve socket path and ensure daemon is running.
-	sockOpts := sockpath.Options{Flag: opts.SocketPath}
 	sockPath, err := resolveRunSocketPath(opts.SocketPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hostmux run: %v\n", err)
 		return exitError{code: 1}
 	}
-	if !sockpath.IsExplicit(sockOpts) {
+	if !sockpath.IsExplicit(sockpath.Options{Flag: opts.SocketPath}) {
 		// Same budget as `hostmux start`: child runs full daemon init before the socket accepts.
 		ctx, cancel := context.WithTimeout(context.Background(), daemon.DefaultEnsureTimeout)
 		if err := daemon.EnsureRunning(ctx, sockPath, daemon.EnsureOpts{}); err != nil {
@@ -156,26 +155,18 @@ func resolveRunSocketPath(socketFlag string) (string, error) {
 		return sockpath.Resolve(sockOpts)
 	}
 
-	resolved, err := sockpath.Resolve(sockOpts)
-	if err != nil {
-		return "", err
-	}
-	defaultSock, err := sockpath.DefaultSocket()
-	if err != nil {
-		return "", err
-	}
-	if resolved != defaultSock {
-		return resolved, nil
+	if p, ok := sockpath.LiveDiscovery(); ok {
+		return p, nil
 	}
 
 	cfg, err := loadOptionalConfig(defaultConfigPath())
 	if err != nil {
 		return "", err
 	}
-	if cfg == nil || cfg.Socket == "" {
-		return resolved, nil
+	if cfg != nil && cfg.Socket != "" {
+		return sockpath.ResolveServe(sockpath.Options{ConfigSocket: cfg.Socket})
 	}
-	return sockpath.ResolveServe(sockpath.Options{ConfigSocket: cfg.Socket})
+	return sockpath.Resolve(sockOpts)
 }
 
 func validateExplicitNames(names []string) error {
@@ -211,6 +202,7 @@ func isValidHostToken(name string) bool {
 		inner := strings.TrimPrefix(strings.TrimSuffix(name, "]"), "[")
 		return strings.Contains(inner, ":") && net.ParseIP(inner) != nil
 	}
+	// Bare IPv6 literals (e.g. ::1) are rejected; use bracketed form ([::1]).
 	if strings.Contains(name, ":") {
 		return false
 	}
@@ -233,11 +225,12 @@ func isValidDNSLabel(label string) bool {
 	if label == "" || len(label) > 63 {
 		return false
 	}
-	for i, r := range label {
+	runes := []rune(label)
+	for i, r := range runes {
 		isAlphaNum := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
 		switch {
 		case isAlphaNum:
-		case r == '-' && i != 0 && i != len(label)-1:
+		case r == '-' && i != 0 && i != len(runes)-1:
 		default:
 			return false
 		}
@@ -245,16 +238,39 @@ func isValidDNSLabel(label string) bool {
 	return true
 }
 
-func resolvePrefix(flagValue string, disable bool) (string, error) {
+func resolvePrefix(flagValue string, disable bool) (prefix string, explicit bool, err error) {
 	if disable {
-		return "", nil
+		return "", false, nil
 	}
 	if flagValue != "" {
-		return flagValue, nil
+		return flagValue, true, nil
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	return worktree.Detect(cwd)
+	detected, err := worktree.Detect(cwd)
+	if err != nil {
+		return "", false, err
+	}
+	return sanitizeWorktreePrefix(detected), false, nil
+}
+
+func sanitizeWorktreePrefix(prefix string) string {
+	if prefix == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range prefix {
+		isAlphaNum := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
+		switch {
+		case isAlphaNum || r == '-':
+			b.WriteRune(r)
+		case r == '_' || r == '.':
+			b.WriteRune('-')
+		default:
+			b.WriteRune('-')
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }

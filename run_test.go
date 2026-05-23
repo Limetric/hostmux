@@ -707,3 +707,72 @@ func runRunCommandAndCaptureInDir(t *testing.T, wd string, script runServerScrip
 
 	return hosts, code, stderr.String()
 }
+
+func TestResolveRunSocketPathPrefersLiveDiscoveryOverConfig(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("HOSTMUX_SOCKET", "")
+	t.Setenv("XDG_RUNTIME_DIR", "")
+
+	sockDir, err := os.MkdirTemp("", "hm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	liveSock := filepath.Join(sockDir, "live.sock")
+	ln, err := net.Listen("unix", liveSock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	hostmuxDir := filepath.Join(tmp, ".hostmux")
+	if err := os.MkdirAll(hostmuxDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hostmuxDir, "socket"), []byte(liveSock+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgDir := filepath.Join(tmp, ".config", "hostmux")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgBody := fmt.Sprintf("socket = %q\n", filepath.Join(tmp, "other.sock"))
+	if err := os.WriteFile(filepath.Join(cfgDir, "hostmux.toml"), []byte(cfgBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := resolveRunSocketPath("")
+	if err != nil {
+		t.Fatalf("resolveRunSocketPath: %v", err)
+	}
+	if got != liveSock {
+		t.Fatalf("got %q want live discovery %q", got, liveSock)
+	}
+}
+
+func TestResolveRunSocketPathUsesConfigWhenNoLiveDiscovery(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("HOSTMUX_SOCKET", "")
+	t.Setenv("XDG_RUNTIME_DIR", "")
+
+	cfgDir := filepath.Join(tmp, ".config", "hostmux")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configSock := filepath.Join(tmp, "configured.sock")
+	cfgBody := fmt.Sprintf("socket = %q\n", configSock)
+	if err := os.WriteFile(filepath.Join(cfgDir, "hostmux.toml"), []byte(cfgBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := resolveRunSocketPath("")
+	if err != nil {
+		t.Fatalf("resolveRunSocketPath: %v", err)
+	}
+	if got != configSock {
+		t.Fatalf("got %q want config socket %q", got, configSock)
+	}
+}

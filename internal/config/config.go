@@ -105,7 +105,8 @@ func validateUpstreamURL(raw string) error {
 	if err != nil {
 		return fmt.Errorf("upstream must be a valid URL: %w", err)
 	}
-	if u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+	scheme := strings.ToLower(u.Scheme)
+	if u.Host == "" || (scheme != "http" && scheme != "https") {
 		return fmt.Errorf("upstream must be an absolute http or https URL")
 	}
 	return nil

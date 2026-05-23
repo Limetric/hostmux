@@ -49,7 +49,7 @@ func TestResolveRequestedHosts_AppliesPrefixBeforeExpansion(t *testing.T) {
 	}
 }
 
-func TestResolveRequestedHosts_RejectsInvalidPrefix(t *testing.T) {
+func TestResolveRequestedHosts_RejectsInvalidExplicitPrefix(t *testing.T) {
 	_, err := resolveRequestedHosts([]string{"svc"}, hostResolveOptions{
 		Domain: "x.test",
 		Prefix: "feature_x",
@@ -59,6 +59,20 @@ func TestResolveRequestedHosts_RejectsInvalidPrefix(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "prefix") {
 		t.Fatalf("error = %v, want prefix", err)
+	}
+}
+
+func TestSanitizeWorktreePrefix(t *testing.T) {
+	cases := map[string]string{
+		"feature_x":     "feature-x",
+		"my.branch":     "my-branch",
+		"chatter-modem": "chatter-modem",
+		"":              "",
+	}
+	for in, want := range cases {
+		if got := sanitizeWorktreePrefix(in); got != want {
+			t.Fatalf("sanitizeWorktreePrefix(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 

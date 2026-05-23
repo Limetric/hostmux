@@ -103,6 +103,16 @@ func DefaultSocket() (string, error) {
 	return defaultSocket()
 }
 
+// LiveDiscovery returns the socket path from the discovery file when it
+// points at a live daemon. Unlike Resolve, it does not fall back to defaults.
+func LiveDiscovery() (string, bool) {
+	p, ok := readDiscovery()
+	if !ok || !discoveryAlive(p) {
+		return "", false
+	}
+	return p, true
+}
+
 func defaultSocket() (string, error) {
 	if xdg := os.Getenv("XDG_RUNTIME_DIR"); xdg != "" {
 		return filepath.Join(xdg, "hostmux.sock"), nil

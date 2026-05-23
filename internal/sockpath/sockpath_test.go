@@ -36,6 +36,55 @@ func TestResolveUsesXDGRuntimeDir(t *testing.T) {
 	}
 }
 
+func TestLiveDiscoveryReturnsLiveSocket(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("HOSTMUX_SOCKET", "")
+	t.Setenv("XDG_RUNTIME_DIR", "")
+
+	sockDir, err := os.MkdirTemp("", "hm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	discovered := filepath.Join(sockDir, "custom.sock")
+	ln, err := net.Listen("unix", discovered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	hostmuxDir := filepath.Join(tmp, ".hostmux")
+	os.MkdirAll(hostmuxDir, 0o755)
+	os.WriteFile(filepath.Join(hostmuxDir, "socket"), []byte(discovered+"\n"), 0o644)
+
+	got, ok := LiveDiscovery()
+	if !ok {
+		t.Fatal("expected live discovery")
+	}
+	if got != discovered {
+		t.Fatalf("got %q want %q", got, discovered)
+	}
+}
+
+func TestLiveDiscoveryFalseWhenMissingOrStale(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("HOSTMUX_SOCKET", "")
+	t.Setenv("XDG_RUNTIME_DIR", "")
+
+	if _, ok := LiveDiscovery(); ok {
+		t.Fatal("expected no discovery")
+	}
+
+	hostmuxDir := filepath.Join(tmp, ".hostmux")
+	os.MkdirAll(hostmuxDir, 0o755)
+	os.WriteFile(filepath.Join(hostmuxDir, "socket"), []byte("/missing/custom.sock\n"), 0o644)
+	if _, ok := LiveDiscovery(); ok {
+		t.Fatal("expected stale discovery to be ignored")
+	}
+}
+
 func TestResolveReadsDiscoveryFile(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
