@@ -281,3 +281,61 @@ func TestInfoReportsPlainHTTPWhenConfigured(t *testing.T) {
 		t.Fatalf("public_https = %v, want false", resp.PublicHTTPS)
 	}
 }
+
+func TestInfoReturnsPublicPort(t *testing.T) {
+	path := filepath.Join(shortTempDir(t), "info-port.sock")
+	r := router.New()
+	srv := New(r, Options{PublicPort: 8443})
+	if err := srv.Listen(path); err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve()
+	t.Cleanup(func() { srv.Close() })
+
+	c := dial(t, path)
+	defer c.Close()
+	enc := sockproto.NewEncoder(c)
+	dec := sockproto.NewDecoder(c)
+	if err := enc.Encode(&sockproto.Message{Op: sockproto.OpInfo}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := dec.Decode()
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.Ok {
+		t.Fatalf("not ok: %s", resp.Error)
+	}
+	if resp.PublicPort != 8443 {
+		t.Fatalf("public_port = %d, want 8443", resp.PublicPort)
+	}
+}
+
+func TestInfoOmitsPublicPortWhenUnset(t *testing.T) {
+	path := filepath.Join(shortTempDir(t), "info-noport.sock")
+	r := router.New()
+	srv := New(r, Options{})
+	if err := srv.Listen(path); err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve()
+	t.Cleanup(func() { srv.Close() })
+
+	c := dial(t, path)
+	defer c.Close()
+	enc := sockproto.NewEncoder(c)
+	dec := sockproto.NewDecoder(c)
+	if err := enc.Encode(&sockproto.Message{Op: sockproto.OpInfo}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := dec.Decode()
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.Ok {
+		t.Fatalf("not ok: %s", resp.Error)
+	}
+	if resp.PublicPort != 0 {
+		t.Fatalf("public_port = %d, want 0 (unset)", resp.PublicPort)
+	}
+}

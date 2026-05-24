@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -259,8 +260,13 @@ func TestURLInheritsDomainFromDaemonConfig(t *testing.T) {
 	t.Cleanup(func() { os.RemoveAll(sockDir) })
 	sockPath := filepath.Join(sockDir, "t.sock")
 
+	// Let the daemon pick the port: listen="127.0.0.1:0" exercises the
+	// runForegroundDaemon path that captures the OS-assigned port post-bind
+	// and is also race-free (no TOCTOU window between Listen/Close and the
+	// daemon rebinding the same port).
 	cfgPath := filepath.Join(binDir, "hostmux.toml")
-	if err := os.WriteFile(cfgPath, []byte("listen = \"127.0.0.1:0\"\ndomain = \"example.com\"\n"), 0o644); err != nil {
+	cfgBody := "listen = \"127.0.0.1:0\"\ndomain = \"example.com\"\n"
+	if err := os.WriteFile(cfgPath, []byte(cfgBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -285,8 +291,84 @@ func TestURLInheritsDomainFromDaemonConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url: %v\n%s", err, out)
 	}
-	if got, want := string(out), "https://api.example.com\n"; got != want {
-		t.Fatalf("stdout = %q, want %q", got, want)
+	got := strings.TrimSpace(string(out))
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("parse url %q: %v", got, err)
+	}
+	if u.Scheme != "https" {
+		t.Fatalf("scheme = %q, want https (full url: %q)", u.Scheme, got)
+	}
+	if u.Hostname() != "api.example.com" {
+		t.Fatalf("hostname = %q, want api.example.com (full url: %q)", u.Hostname(), got)
+	}
+	if u.Port() == "" || u.Port() == "443" {
+		t.Fatalf("port = %q, want non-default (full url: %q)", u.Port(), got)
+	}
+}
+
+func TestURLOmitsPortWhenHidePortSet(t *testing.T) {
+	env, _ := isolatedHostmuxEnv(t)
+
+	binDir := t.TempDir()
+	bin := filepath.Join(binDir, "hostmux")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+
+	sockDir, err := os.MkdirTemp("", "hm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(sockDir) })
+	sockPath := filepath.Join(sockDir, "t.sock")
+
+	// Let the daemon pick the port: with listen="127.0.0.1:0" the real
+	// listener gets a non-default ephemeral port, so a daemon WITHOUT
+	// hide_port would advertise `https://api.example.com:<ephemeral>`.
+	// With hide_port=true the printed URL must be portless regardless of
+	// which port the OS hands out.
+	cfgPath := filepath.Join(binDir, "hostmux.toml")
+	cfgBody := "listen = \"127.0.0.1:0\"\ndomain = \"example.com\"\nhide_port = true\n"
+	if err := os.WriteFile(cfgPath, []byte(cfgBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	daemonCmd := exec.CommandContext(ctx, bin, "start", "--foreground", "--config", cfgPath, "--socket", sockPath)
+	daemonCmd.Env = env
+	daemonCmd.Stdout = testWriter{t}
+	daemonCmd.Stderr = testWriter{t}
+	if err := daemonCmd.Start(); err != nil {
+		t.Fatalf("start daemon: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = daemonCmd.Process.Kill()
+		_ = daemonCmd.Wait()
+	})
+	waitForSocket(t, sockPath, 5*time.Second)
+
+	urlCmd := exec.Command(bin, "url", "--socket", sockPath, "--no-prefix", "api")
+	urlCmd.Env = env
+	out, err := urlCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("url: %v\n%s", err, out)
+	}
+	got := strings.TrimSpace(string(out))
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("parse url %q: %v", got, err)
+	}
+	if u.Scheme != "https" {
+		t.Fatalf("scheme = %q, want https (full url: %q)", u.Scheme, got)
+	}
+	if u.Hostname() != "api.example.com" {
+		t.Fatalf("hostname = %q, want api.example.com (full url: %q)", u.Hostname(), got)
+	}
+	if u.Port() != "" {
+		t.Fatalf("port = %q, want empty (full url: %q)", u.Port(), got)
 	}
 }
 

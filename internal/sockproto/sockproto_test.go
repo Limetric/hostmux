@@ -89,3 +89,27 @@ func TestDecoderEOF(t *testing.T) {
 		t.Fatal("expected EOF")
 	}
 }
+
+func TestEncodeDecodePublicPort(t *testing.T) {
+	var buf bytes.Buffer
+	if err := NewEncoder(&buf).Encode(&Message{Ok: true, PublicPort: 8443}); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	got, err := NewDecoder(&buf).Decode()
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.PublicPort != 8443 {
+		t.Fatalf("public_port = %d, want 8443", got.PublicPort)
+	}
+}
+
+func TestEncodeOmitsPublicPortWhenZero(t *testing.T) {
+	var buf bytes.Buffer
+	if err := NewEncoder(&buf).Encode(&Message{Ok: true}); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if strings.Contains(buf.String(), "public_port") {
+		t.Fatalf("zero public_port was not omitted: %s", buf.String())
+	}
+}
