@@ -174,33 +174,30 @@ func runForegroundDaemon(opts startOptions) error {
 	// HTTP listeners.
 	// Pre-bind the TLS TCP listener so the OS resolves any ":0" port before we
 	// need to report the real address to clients via OpInfo (PublicPort).
-	var tlsLn net.Listener
-	var publicPort int
-	if tlsCfg != nil {
-		ln, lerr := net.Listen("tcp", tlsCfg.Listen)
-		if lerr != nil {
-			if p, perr := extractListenPort(tlsCfg.Listen); perr == nil {
-				// hint is already a fully-formatted line; log.Println prints
-				// it verbatim (no format-verb interpretation) and is less
-				// easy to misread as a stray log.Printf with no args.
-				if hint := privilegedPortHint(lerr, p); hint != "" {
-					log.Println(hint)
-				}
+	// tlsCfg is constructed unconditionally above so no nil guard is needed
+	// today; if a plain-only mode is added later, that change should make
+	// tlsCfg conditional and re-add the guard.
+	tlsLn, lerr := net.Listen("tcp", tlsCfg.Listen)
+	if lerr != nil {
+		if p, perr := extractListenPort(tlsCfg.Listen); perr == nil {
+			// hint is already a fully-formatted line; log.Println prints
+			// it verbatim (no format-verb interpretation) and is less
+			// easy to misread as a stray log.Printf with no args.
+			if hint := privilegedPortHint(lerr, p); hint != "" {
+				log.Println(hint)
 			}
-			return fmt.Errorf("hostmux start: listener: bind %s: %w", tlsCfg.Listen, lerr)
 		}
-		tlsLn = ln
-		tlsCfg.Listen = ln.Addr().String()
-		// ln.Addr().String() is a canonical host:port produced by the
-		// standard library, so extractListenPort cannot fail on it in
-		// practice. Treat any error as a hard failure rather than silently
-		// reporting PublicPort=0, which would misrepresent URLs to clients.
-		p, perr := extractListenPort(tlsCfg.Listen)
-		if perr != nil {
-			tlsLn.Close()
-			return fmt.Errorf("hostmux start: parse resolved listen %q: %w", tlsCfg.Listen, perr)
-		}
-		publicPort = p
+		return fmt.Errorf("hostmux start: listener: bind %s: %w", tlsCfg.Listen, lerr)
+	}
+	tlsCfg.Listen = tlsLn.Addr().String()
+	// tlsLn.Addr().String() is a canonical host:port produced by the
+	// standard library, so extractListenPort cannot fail on it in
+	// practice. Treat any error as a hard failure rather than silently
+	// reporting PublicPort=0, which would misrepresent URLs to clients.
+	publicPort, perr := extractListenPort(tlsCfg.Listen)
+	if perr != nil {
+		tlsLn.Close()
+		return fmt.Errorf("hostmux start: parse resolved listen %q: %w", tlsCfg.Listen, perr)
 	}
 
 	if shouldWarnLocalhostPort(currentDomain.Load().(string), publicPort) {
@@ -211,9 +208,7 @@ func runForegroundDaemon(opts startOptions) error {
 	lc := listener.Config{TLS: tlsCfg}
 	servers, err := listener.Build(lc, handler)
 	if err != nil {
-		if tlsLn != nil {
-			tlsLn.Close()
-		}
+		tlsLn.Close()
 		return fmt.Errorf("hostmux start: listener: %w", err)
 	}
 
