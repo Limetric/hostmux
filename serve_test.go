@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -62,6 +64,38 @@ func TestResolveServeSocketPath_SocketFlagOverridesConfig(t *testing.T) {
 	}
 	if got != flagSock {
 		t.Fatalf("got %q want %q", got, flagSock)
+	}
+}
+
+func TestRunForegroundDaemonReturnsTLSListenError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("HOSTMUX_SOCKET", "")
+	t.Setenv("XDG_RUNTIME_DIR", "")
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	dir, err := os.MkdirTemp("", "hm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	cfgPath := filepath.Join(dir, "hostmux.toml")
+	sockPath := filepath.Join(dir, "hostmux.sock")
+	body := fmt.Sprintf("listen = %q\nsocket = %q\n", ln.Addr().String(), sockPath)
+	if err := os.WriteFile(cfgPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = runForegroundDaemon(startOptions{ConfigPath: cfgPath})
+	if err == nil {
+		t.Fatal("expected listen error")
+	}
+	if !strings.Contains(err.Error(), "address already in use") {
+		t.Fatalf("error = %q, want address already in use", err)
 	}
 }
 

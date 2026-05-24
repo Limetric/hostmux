@@ -290,6 +290,73 @@ func TestURLInheritsDomainFromDaemonConfig(t *testing.T) {
 	}
 }
 
+func TestRunAutoStartUsesConfigSocket(t *testing.T) {
+	env, home := isolatedHostmuxEnv(t)
+
+	binDir := t.TempDir()
+	bin := filepath.Join(binDir, "hostmux")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+
+	sockDir, err := os.MkdirTemp("", "hm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(sockDir) })
+	sockPath := filepath.Join(sockDir, "t.sock")
+
+	cfgDir := filepath.Join(home, ".config", "hostmux")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgBody := fmt.Sprintf("listen = \"127.0.0.1:0\"\nsocket = %q\ndomain = \"example.com\"\n", sockPath)
+	if err := os.WriteFile(filepath.Join(cfgDir, "hostmux.toml"), []byte(cfgBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.Command(bin, "run", "--name", "api", "--", "/bin/sh", "-c", "sleep 2")
+	run.Env = env
+	run.Stdout = testWriter{t}
+	run.Stderr = testWriter{t}
+	if err := run.Start(); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	t.Cleanup(func() {
+		stop := exec.Command(bin, "stop", "--socket", sockPath)
+		stop.Env = env
+		_ = stop.Run()
+	})
+
+	waitForSocket(t, sockPath, 5*time.Second)
+
+	defaultSock := filepath.Join(home, ".hostmux", "hostmux.sock")
+	if _, err := os.Stat(defaultSock); err == nil {
+		_ = run.Process.Kill()
+		_ = run.Wait()
+		t.Fatalf("default socket %q exists; expected custom socket only", defaultSock)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		routes := exec.Command(bin, "routes", "--socket", sockPath)
+		routes.Env = env
+		routesOut, err := routes.CombinedOutput()
+		if err == nil && strings.Contains(string(routesOut), "api.example.com") {
+			if err := run.Wait(); err != nil {
+				t.Fatalf("run wait: %v", err)
+			}
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	_ = run.Process.Kill()
+	_ = run.Wait()
+	t.Fatal("registered route did not appear on custom socket")
+}
+
 func waitForSocket(t *testing.T, path string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -736,11 +803,12 @@ func isolatedHostmuxEnv(t *testing.T) ([]string, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(home) })
-	env := make([]string, 0, len(os.Environ())+3)
+	env := make([]string, 0, len(os.Environ())+4)
 	for _, entry := range os.Environ() {
 		switch {
 		case strings.HasPrefix(entry, "HOME="):
 		case strings.HasPrefix(entry, "XDG_RUNTIME_DIR="):
+		case strings.HasPrefix(entry, "XDG_CONFIG_HOME="):
 		case strings.HasPrefix(entry, "HOSTMUX_SOCKET="):
 		default:
 			env = append(env, entry)
@@ -749,6 +817,7 @@ func isolatedHostmuxEnv(t *testing.T) ([]string, string) {
 	env = append(env,
 		"HOME="+home,
 		"XDG_RUNTIME_DIR=",
+		"XDG_CONFIG_HOME=",
 		"HOSTMUX_SOCKET=",
 	)
 	return env, home

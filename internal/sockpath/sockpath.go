@@ -6,9 +6,11 @@ package sockpath
 
 import (
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Limetric/hostmux/internal/filelock"
 )
@@ -101,6 +103,16 @@ func DefaultSocket() (string, error) {
 	return defaultSocket()
 }
 
+// LiveDiscovery returns the socket path from the discovery file when it
+// points at a live daemon. Unlike Resolve, it does not fall back to defaults.
+func LiveDiscovery() (string, bool) {
+	p, ok := readDiscovery()
+	if !ok || !discoveryAlive(p) {
+		return "", false
+	}
+	return p, true
+}
+
 func defaultSocket() (string, error) {
 	if xdg := os.Getenv("XDG_RUNTIME_DIR"); xdg != "" {
 		return filepath.Join(xdg, "hostmux.sock"), nil
@@ -129,12 +141,18 @@ func readDiscovery() (string, bool) {
 }
 
 func discoveryAlive(sockPath string) bool {
-	if _, err := os.Stat(sockPath); err == nil {
+	d := net.Dialer{Timeout: 100 * time.Millisecond}
+	conn, err := d.Dial("unix", sockPath)
+	if err == nil {
+		_ = conn.Close()
 		return true
 	}
 
 	pidPath := PIDFilePathFor(sockPath)
-	f, err := os.OpenFile(pidPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if _, err := os.Stat(pidPath); err != nil {
+		return false
+	}
+	f, err := os.Open(pidPath)
 	if err != nil {
 		return false
 	}
