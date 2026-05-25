@@ -435,6 +435,20 @@ func TestRunCommandUsesFirstResolvedHostForHostmuxURLWhenMultipleNamesProvided(t
 	}
 }
 
+func TestRunCommandHostmuxURLIncludesDaemonPort(t *testing.T) {
+	_, code, stderr := runRunCommandAndCapture(t, runServerScript{
+		domain:     "example.com",
+		publicPort: 8443,
+	}, []string{
+		"--name", "api",
+		"--",
+		"sh", "-c", `test "$HOSTMUX_URL" = "https://api.example.com:8443"`,
+	})
+	if code != 0 {
+		t.Fatalf("run command exit code = %d, stderr = %q", code, stderr)
+	}
+}
+
 func TestRunCommandRejectsEmptyExplicitName(t *testing.T) {
 	hosts, code, stderr := runRunCommandAndCapture(t, runServerScript{}, []string{
 		"--name=",
@@ -590,6 +604,10 @@ type runServerScript struct {
 	// plainEdge is true when the fake daemon uses plain HTTP on its public
 	// listener (OpInfo reports public_https: false).
 	plainEdge bool
+	// publicPort is what the fake daemon reports as public_port in its
+	// OpInfo response. Zero means "unset" — both old daemons that predate
+	// the field and new daemons listening on the scheme default.
+	publicPort int
 }
 
 func runRunCommandAndCapture(t *testing.T, script runServerScript, args []string) ([]string, int, string) {
@@ -654,6 +672,7 @@ func runRunCommandAndCaptureInDir(t *testing.T, wd string, script runServerScrip
 				if ok {
 					https := !script.plainEdge
 					msg.PublicHTTPS = &https
+					msg.PublicPort = script.publicPort
 				}
 				if err := enc.Encode(msg); err != nil {
 					errCh <- err

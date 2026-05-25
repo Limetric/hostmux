@@ -172,40 +172,79 @@ func runForegroundDaemon(opts startOptions) error {
 	defer pidLock.Close()
 
 	// HTTP listeners.
+	// Pre-bind the TLS TCP listener so the OS resolves any ":0" port before we
+	// need to report the real address to clients via OpInfo (PublicPort).
+	// tlsCfg is constructed unconditionally above so no nil guard is needed
+	// today; if a plain-only mode is added later, that change should make
+	// tlsCfg conditional and re-add the guard.
+	tlsLn, lerr := net.Listen("tcp", tlsCfg.Listen)
+	if lerr != nil {
+		if p, perr := extractListenPort(tlsCfg.Listen); perr == nil {
+			// hint is already a fully-formatted line; log.Println prints
+			// it verbatim (no format-verb interpretation) and is less
+			// easy to misread as a stray log.Printf with no args.
+			if hint := privilegedPortHint(lerr, p); hint != "" {
+				log.Println(hint)
+			}
+		}
+		return fmt.Errorf("hostmux start: listener: bind %s: %w", tlsCfg.Listen, lerr)
+	}
+	tlsCfg.Listen = tlsLn.Addr().String()
+	// tlsLn.Addr().String() is a canonical host:port produced by the
+	// standard library, so extractListenPort cannot fail on it in
+	// practice. Treat any error as a hard failure rather than silently
+	// reporting PublicPort=0, which would misrepresent URLs to clients.
+	publicPort, perr := extractListenPort(tlsCfg.Listen)
+	if perr != nil {
+		tlsLn.Close()
+		return fmt.Errorf("hostmux start: parse resolved listen %q: %w", tlsCfg.Listen, perr)
+	}
+
+	if shouldWarnLocalhostPort(currentDomain.Load().(string), publicPort) {
+		log.Printf("hostmux start: listening on :%d but domain is localhost; browsers expect https:// on :443 unless the URL includes an explicit port. See README \"HTTPS on port 443\".", publicPort)
+	}
+
 	handler := proxy.New(r)
 	lc := listener.Config{TLS: tlsCfg}
 	servers, err := listener.Build(lc, handler)
 	if err != nil {
+		tlsLn.Close()
 		return fmt.Errorf("hostmux start: listener: %w", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Start HTTP servers. Bind synchronously so startup failures are returned
-	// to the foreground caller instead of being reduced to a clean shutdown.
-	httpErrCh := make(chan error, len(servers))
-	listeners := make([]net.Listener, 0, len(servers))
-	for _, srv := range servers {
-		ln, err := net.Listen("tcp", srv.Addr)
-		if err != nil {
-			for _, open := range listeners {
-				_ = open.Close()
-			}
-			return fmt.Errorf("hostmux start: listener %s: %w", srv.Addr, err)
-		}
-		listeners = append(listeners, ln)
-	}
-	for i, srv := range servers {
-		ln := listeners[i]
-		go func(srv *http.Server, ln net.Listener) {
-			serr := srv.ServeTLS(ln, tlsCfg.CertFile, tlsCfg.KeyFile)
+	// Start HTTP servers. The TLS TCP listener was already bound above so
+	// PublicPort is known before we accept any clients; hand it directly
+	// to the TLS server here. The Plain path is unreachable today
+	// (runForegroundDaemon never configures a plain listener) but wired
+	// up so enabling one later is a config-only change. Errors are
+	// surfaced via httpErrCh so the foreground caller sees startup
+	// failures instead of treating them as a clean shutdown.
+	httpErrCh := make(chan error, 2)
+	if servers.TLS != nil {
+		tlsSrv := servers.TLS
+		ln := tlsLn
+		go func() {
+			serr := tlsSrv.ServeTLS(ln, tlsCfg.CertFile, tlsCfg.KeyFile)
 			if serr != nil && serr != http.ErrServerClosed {
 				log.Printf("http server: %v", serr)
 				httpErrCh <- serr
 				cancel()
 			}
-		}(srv, ln)
+		}()
+	}
+	if servers.Plain != nil {
+		plainSrv := servers.Plain
+		go func() {
+			serr := plainSrv.ListenAndServe()
+			if serr != nil && serr != http.ErrServerClosed {
+				log.Printf("http server: %v", serr)
+				httpErrCh <- serr
+				cancel()
+			}
+		}()
 	}
 	log.Printf("hostmux start: TLS listening on %s", tlsCfg.Listen)
 	if generatedTLS {
@@ -213,6 +252,10 @@ func runForegroundDaemon(opts startOptions) error {
 	}
 
 	// Unix socket server.
+	hidePort := cfg != nil && cfg.HidePort
+	if hidePort {
+		log.Printf("hostmux start: hide_port set; public URLs will omit the listener port")
+	}
 	sockSrv := sockserver.New(r, sockserver.Options{
 		OnShutdown: cancel,
 		Domain: func() string {
@@ -220,9 +263,19 @@ func runForegroundDaemon(opts startOptions) error {
 		},
 		// PlainHTTP is unreachable while serve always configures lc.TLS; kept for
 		// a future plain-only public listener (lc.TLS == nil).
-		PlainHTTP: lc.TLS == nil,
+		PlainHTTP:  lc.TLS == nil,
+		PublicPort: advertisedPort(publicPort, hidePort),
 	})
 	if err := sockSrv.Listen(sockPath); err != nil {
+		// HTTP server goroutines are already running. Shutdown closes
+		// each listener (including the pre-bound tlsLn) so the TCP port
+		// is released and the goroutines exit with ErrServerClosed
+		// instead of leaking to process exit.
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		for _, srv := range servers.All() {
+			_ = srv.Shutdown(shutdownCtx)
+		}
 		return fmt.Errorf("hostmux start: sockserver: %w", err)
 	}
 	go sockSrv.Serve()
@@ -269,7 +322,7 @@ func runForegroundDaemon(opts startOptions) error {
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
-	for _, srv := range servers {
+	for _, srv := range servers.All() {
 		_ = srv.Shutdown(shutdownCtx)
 	}
 	_ = sockSrv.Close()
@@ -450,4 +503,77 @@ func readPIDFile(path string) (int, error) {
 		return 0, err
 	}
 	return pid, nil
+}
+
+// extractListenPort parses the TCP port out of a listen address such as
+// ":8443", "0.0.0.0:443", "127.0.0.1:8443", or "[::1]:8443". Empty or
+// malformed inputs return an error.
+func extractListenPort(listen string) (int, error) {
+	if listen == "" {
+		return 0, fmt.Errorf("empty listen address")
+	}
+	_, portStr, err := net.SplitHostPort(listen)
+	if err != nil {
+		return 0, fmt.Errorf("split listen %q: %w", listen, err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return 0, fmt.Errorf("parse port %q: %w", portStr, err)
+	}
+	// Reject port 0 (OS-assigned ephemeral) and negative values.
+	// Port 0 doubles as the "unspecified — use scheme default" sentinel
+	// on the wire; passing it through would silently misrepresent the
+	// real bound port in URLs.
+	if port <= 0 {
+		return 0, fmt.Errorf("listen %q: port must be > 0, got %d", listen, port)
+	}
+	return port, nil
+}
+
+// shouldWarnLocalhostPort returns true when the daemon is configured with
+// domain "localhost" but not listening on port 443. In that case,
+// browsers expect `https://<name>.localhost` to hit port 443 by default,
+// so printed URLs must include the real port to be clickable — and the
+// user probably wants to know.
+//
+// A port of 0 suppresses the warning: it means we failed to parse the
+// listen address and already logged something about that failure.
+func shouldWarnLocalhostPort(domain string, port int) bool {
+	if port == 0 || port == 443 {
+		return false
+	}
+	return hostnames.NormalizeDomain(domain) == "localhost"
+}
+
+// privilegedPortHint returns a user-facing hint line when a listener
+// failed to bind a privileged port (< 1024) due to a permission error.
+// The empty string means "no hint applies — let the caller log the raw
+// error as usual". Accepts wrapped errors via errors.Is and also matches
+// on "permission denied" substring for error wrappings that drop the
+// underlying syscall error.
+func privilegedPortHint(err error, port int) string {
+	if err == nil || port <= 0 || port >= 1024 {
+		return ""
+	}
+	if errors.Is(err, syscall.EACCES) || strings.Contains(err.Error(), "permission denied") {
+		return fmt.Sprintf(
+			"hostmux start: bind on :%d denied; privileged ports require root, CAP_NET_BIND_SERVICE, or a %d→8443 redirect. See README \"HTTPS on port 443\".",
+			port, port,
+		)
+	}
+	return ""
+}
+
+// advertisedPort returns the port the daemon should report to clients via
+// OpInfo.PublicPort. When hide is true the daemon advertises 0 (which is
+// already the wire sentinel for "no explicit public port — use the scheme
+// default"), so formatPublicURL renders portless URLs even though the
+// real listener stays on realPort. Used when the daemon sits behind a
+// reverse proxy or tunnel (e.g. cloudflared) that terminates the public
+// connection on standard HTTPS.
+func advertisedPort(realPort int, hide bool) int {
+	if hide {
+		return 0
+	}
+	return realPort
 }

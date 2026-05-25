@@ -21,15 +21,18 @@ func TestBuildPlainHTTP1Server(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	if len(servers) != 1 {
-		t.Fatalf("len = %d", len(servers))
+	if servers.Plain == nil {
+		t.Fatal("Plain = nil, want non-nil")
+	}
+	if servers.TLS != nil {
+		t.Fatal("TLS = non-nil, want nil")
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	go servers[0].Serve(ln)
-	defer servers[0].Shutdown(context.Background())
+	go servers.Plain.Serve(ln)
+	defer servers.Plain.Shutdown(context.Background())
 
 	resp, err := http.Get("http://" + ln.Addr().String() + "/")
 	if err != nil {
@@ -47,12 +50,15 @@ func TestPlainListenerSpeaksH2C(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if servers.Plain == nil {
+		t.Fatal("Plain = nil, want non-nil")
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	go servers[0].Serve(ln)
-	defer servers[0].Shutdown(context.Background())
+	go servers.Plain.Serve(ln)
+	defer servers.Plain.Shutdown(context.Background())
 
 	// HTTP/2 client over plain TCP (prior-knowledge h2c).
 	client := &http.Client{
@@ -76,17 +82,20 @@ func TestPlainListenerSpeaksH2C(t *testing.T) {
 	}
 }
 
-func TestBuildWithoutTLSReturnsOneServer(t *testing.T) {
+func TestBuildWithoutTLSReturnsPlainOnly(t *testing.T) {
 	servers, err := Build(Config{Plain: ":8080"}, okHandler())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(servers) != 1 {
-		t.Fatalf("expected 1 server, got %d", len(servers))
+	if servers.Plain == nil {
+		t.Fatal("Plain = nil, want non-nil")
+	}
+	if servers.TLS != nil {
+		t.Fatal("TLS = non-nil, want nil")
 	}
 }
 
-func TestBuildWithTLSReturnsTwoServers(t *testing.T) {
+func TestBuildWithBothReturnsBoth(t *testing.T) {
 	servers, err := Build(Config{
 		Plain: ":8080",
 		TLS:   &TLSConfig{Listen: ":8443", CertFile: "/dev/null", KeyFile: "/dev/null"},
@@ -94,19 +103,25 @@ func TestBuildWithTLSReturnsTwoServers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(servers) != 2 {
-		t.Fatalf("expected 2 servers, got %d", len(servers))
+	if servers.Plain == nil || servers.TLS == nil {
+		t.Fatalf("Plain=%v TLS=%v, want both non-nil", servers.Plain, servers.TLS)
+	}
+	if got := servers.All(); len(got) != 2 || got[0] != servers.Plain || got[1] != servers.TLS {
+		t.Fatalf("All() = %v, want [Plain, TLS]", got)
 	}
 }
 
-func TestBuildWithOnlyTLSReturnsOneServer(t *testing.T) {
+func TestBuildWithOnlyTLSReturnsTLSOnly(t *testing.T) {
 	servers, err := Build(Config{
 		TLS: &TLSConfig{Listen: ":8443", CertFile: "/dev/null", KeyFile: "/dev/null"},
 	}, okHandler())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(servers) != 1 {
-		t.Fatalf("expected 1 server, got %d", len(servers))
+	if servers.TLS == nil {
+		t.Fatal("TLS = nil, want non-nil")
+	}
+	if servers.Plain != nil {
+		t.Fatal("Plain = non-nil, want nil")
 	}
 }

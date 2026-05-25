@@ -29,11 +29,12 @@ const (
 
 // Config is the parsed TOML config file.
 type Config struct {
-	Listen string    `toml:"listen"`
-	Socket string    `toml:"socket"`
-	Domain string    `toml:"domain"`
-	TLS    *TLSBlock `toml:"tls"`
-	Apps   []App     `toml:"app"`
+	Listen   string    `toml:"listen"`
+	Socket   string    `toml:"socket"`
+	Domain   string    `toml:"domain"`
+	HidePort bool      `toml:"hide_port"`
+	TLS      *TLSBlock `toml:"tls"`
+	Apps     []App     `toml:"app"`
 }
 
 // TLSBlock configures the TLS listener.

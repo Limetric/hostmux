@@ -182,3 +182,31 @@ func TestRouterEntries(t *testing.T) {
 		t.Fatalf("entries[0].Upstream = %q", entries[0].Upstream)
 	}
 }
+
+func TestLoadHidePort(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hostmux.toml")
+	writeFile(t, path, `
+hide_port = true
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.HidePort {
+		t.Fatalf("hide_port = false, want true")
+	}
+}
+
+func TestLoadHidePortDefaultsFalse(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hostmux.toml")
+	writeFile(t, path, ``)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.HidePort {
+		t.Fatalf("hide_port = true, want false (default)")
+	}
+}

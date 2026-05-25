@@ -27,10 +27,36 @@ type TLSConfig struct {
 	KeyFile  string
 }
 
-// Build returns the http.Servers that should be started. The caller is
-// responsible for calling Serve / ListenAndServeTLS as appropriate.
-func Build(cfg Config, h http.Handler) ([]*http.Server, error) {
-	servers := make([]*http.Server, 0, 2)
+// Servers groups the per-role HTTP servers the daemon should start.
+// Either field may be nil if the corresponding Config entry was empty.
+// The named fields replace the previous positional contract (TLS last),
+// so callers that need to distinguish them — e.g. to hand a pre-bound
+// listener to only the TLS server — can do so without a brittle
+// `i == len(servers)-1` check.
+type Servers struct {
+	Plain *http.Server
+	TLS   *http.Server
+}
+
+// All returns the non-nil servers in startup order (Plain first, TLS
+// last). Convenient for loops that don't care which role a server has,
+// such as shutdown.
+func (s Servers) All() []*http.Server {
+	out := make([]*http.Server, 0, 2)
+	if s.Plain != nil {
+		out = append(out, s.Plain)
+	}
+	if s.TLS != nil {
+		out = append(out, s.TLS)
+	}
+	return out
+}
+
+// Build returns the per-role http.Servers that should be started. The
+// caller is responsible for calling Serve / ListenAndServeTLS on each
+// non-nil field as appropriate.
+func Build(cfg Config, h http.Handler) (Servers, error) {
+	var s Servers
 
 	if cfg.Plain != "" {
 		plainSrv := &http.Server{
@@ -40,7 +66,7 @@ func Build(cfg Config, h http.Handler) ([]*http.Server, error) {
 		plainSrv.Protocols = new(http.Protocols)
 		plainSrv.Protocols.SetHTTP1(true)
 		plainSrv.Protocols.SetUnencryptedHTTP2(true)
-		servers = append(servers, plainSrv)
+		s.Plain = plainSrv
 	}
 
 	if cfg.TLS != nil {
@@ -50,9 +76,9 @@ func Build(cfg Config, h http.Handler) ([]*http.Server, error) {
 		}
 		// Default TLS config negotiates HTTP/2 via ALPN.
 		if err := http2.ConfigureServer(tlsSrv, &http2.Server{}); err != nil {
-			return nil, err
+			return Servers{}, err
 		}
-		servers = append(servers, tlsSrv)
+		s.TLS = tlsSrv
 	}
-	return servers, nil
+	return s, nil
 }

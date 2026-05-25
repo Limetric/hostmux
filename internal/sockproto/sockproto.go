@@ -36,6 +36,10 @@ type Message struct {
 	// PublicHTTPS is true when the daemon serves HTTPS on its public
 	// listener. Omitted by older daemons; clients should treat nil as true.
 	PublicHTTPS *bool `json:"public_https,omitempty"`
+	// PublicPort is the effective public listener port. Omitted by
+	// daemons that predate the field; clients should treat 0 as
+	// "use the scheme default" (443 for https, 80 for http).
+	PublicPort int `json:"public_port,omitempty"`
 }
 
 // Entry is the on-wire shape of a routing table entry, used in list responses.
