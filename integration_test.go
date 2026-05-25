@@ -36,15 +36,7 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
 
-	// 2. Allocate a free TCP port for the proxy listen.
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	proxyAddr := l.Addr().String()
-	l.Close()
-
-	// 3. Use a SHORT tmp dir for the unix socket — macOS limit is ~104 bytes.
+	// 2. Use a SHORT tmp dir for the unix socket — macOS limit is ~104 bytes.
 	sockDir, err := os.MkdirTemp("", "hm")
 	if err != nil {
 		t.Fatal(err)
@@ -52,14 +44,17 @@ func TestEndToEnd(t *testing.T) {
 	t.Cleanup(func() { os.RemoveAll(sockDir) })
 	sockPath := filepath.Join(sockDir, "t.sock")
 
-	// 4. Write a tiny config that points the TLS listener at proxyAddr.
+	// 3. Write a tiny config that lets the daemon pick its TLS port. Using
+	// listen="127.0.0.1:0" avoids the TOCTOU race of pre-allocating a port,
+	// closing it, and trusting nothing else grabs it before the daemon
+	// rebinds — we learn the real bound port from OpInfo below.
 	cfgPath := filepath.Join(binDir, "hostmux.toml")
-	cfgBody := fmt.Sprintf("[tls]\nlisten = %q\n", proxyAddr)
+	cfgBody := "[tls]\nlisten = \"127.0.0.1:0\"\n"
 	if err := os.WriteFile(cfgPath, []byte(cfgBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	// 5. Spawn the daemon.
+	// 4. Spawn the daemon.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	daemonCmd := exec.CommandContext(ctx, bin, "start", "--foreground", "--config", cfgPath, "--socket", sockPath)
@@ -74,8 +69,16 @@ func TestEndToEnd(t *testing.T) {
 		_ = daemonCmd.Wait()
 	})
 
-	// 6. Wait for the unix socket file AND for the proxy port to be reachable.
+	// 5. Wait for the unix socket, then ask the daemon what port it bound.
 	waitForSocket(t, sockPath, 5*time.Second)
+	_, _, publicPort, err := lookupDaemonInfo(sockPath)
+	if err != nil {
+		t.Fatalf("lookup daemon info: %v", err)
+	}
+	if publicPort == 0 {
+		t.Fatal("daemon did not report a public port")
+	}
+	proxyAddr := fmt.Sprintf("127.0.0.1:%d", publicPort)
 	waitForTCP(t, proxyAddr, 5*time.Second)
 
 	// 7. Start a fake upstream.
