@@ -76,9 +76,21 @@ func runURL(opts urlOptions) error {
 			hosts = hostnames.Expand(hosts, domain)
 		} else if configWarning != "" {
 			fmt.Fprintf(os.Stderr, "hostmux url: read config: %s; using bare host unchanged\n", configWarning)
+			daemonWarning = ""
 		} else if daemonWarning != "" {
 			fmt.Fprintf(os.Stderr, "hostmux url: %s; using bare host unchanged\n", daemonWarning)
+			daemonWarning = ""
 		}
+	}
+
+	// Surface the daemon-unreachable warning even when no bare host needed
+	// expansion. Without this, `hostmux url --domain X api` silently prints
+	// a portless URL when the daemon is down — the user has no signal that
+	// the port may be missing because `--domain` pre-expands all names and
+	// the bare-host branch above never runs. The branch clears
+	// daemonWarning when it already printed it, so we don't double-report.
+	if daemonWarning != "" {
+		fmt.Fprintf(os.Stderr, "hostmux url: %s; URL may omit the daemon's listener port\n", daemonWarning)
 	}
 
 	writer := opts.Writer

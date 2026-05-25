@@ -633,8 +633,11 @@ func TestURLCommandDomainFlagTakesPriorityOverDaemonLookup(t *testing.T) {
 	if got, want := stdout, "https://backend.example.com\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
-	if stderr != "" {
-		t.Fatalf("stderr = %q, want empty stderr", stderr)
+	// --domain wins for hostname construction, but the daemon was still
+	// dialled for the port and is unreachable. The user must be told why
+	// the printed URL has no port instead of silently degrading.
+	if !strings.Contains(stderr, "URL may omit the daemon's listener port") {
+		t.Fatalf("stderr = %q, want daemon-unreachable warning", stderr)
 	}
 }
 
