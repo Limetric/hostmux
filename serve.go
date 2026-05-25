@@ -267,6 +267,15 @@ func runForegroundDaemon(opts startOptions) error {
 		PublicPort: advertisedPort(publicPort, hidePort),
 	})
 	if err := sockSrv.Listen(sockPath); err != nil {
+		// HTTP server goroutines are already running. Shutdown closes
+		// each listener (including the pre-bound tlsLn) so the TCP port
+		// is released and the goroutines exit with ErrServerClosed
+		// instead of leaking to process exit.
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		for _, srv := range servers.All() {
+			_ = srv.Shutdown(shutdownCtx)
+		}
 		return fmt.Errorf("hostmux start: sockserver: %w", err)
 	}
 	go sockSrv.Serve()
