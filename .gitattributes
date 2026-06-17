@@ -1,0 +1,14 @@
+# Normalize line endings to LF on checkout for all platforms. Go tooling
+# (gofmt) requires LF, so without this the Windows CI runner would check out
+# CRLF (default autocrlf) and the formatting gate would fail.
+* text=auto eol=lf
+
+# Be explicit for the source/text types we ship.
+*.go    text eol=lf
+*.sh    text eol=lf
+*.md    text eol=lf
+*.toml  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.mod   text eol=lf
+*.sum   text eol=lf
