@@ -87,6 +87,14 @@ identifier for `unexpose`.
 By default, `hostmux start` launches the daemon and it listens on `:8443`, generates a self-signed certificate if needed, and stores it at `~/.hostmux/tls/hostmux.crt` and `~/.hostmux/tls/hostmux.key`.
 If that managed certificate expires or you want a fresh one, remove `~/.hostmux/tls/` and restart `hostmux start`.
 
+Generate a matching ingress snippet for your config with `hostmux cloudflare config`
+(reads the config file, and live daemon info when reachable):
+
+```sh
+hostmux cloudflare config            # prints the ingress block below
+hostmux cloudflare config --domain example.com
+```
+
 If you want HTTP/2 multiplexing on the tunnel-to-origin hop, point `cloudflared` at the default HTTPS listener:
 
 ```yaml
