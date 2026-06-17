@@ -36,6 +36,12 @@ hostmux routes
 # Print the URL for a route without starting anything.
 hostmux url --domain example.com --name myapp
 
+# Diagnose setup/runtime problems (config, socket, daemon, TLS).
+hostmux doctor
+
+# Validate the config file without starting the daemon.
+hostmux config check
+
 # Stop the daemon.
 hostmux stop
 ```
