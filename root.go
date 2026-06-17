@@ -75,6 +75,8 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(
 		newStartCmd(),
 		newRunCmd(),
+		newExposeCmd(),
+		newUnexposeCmd(),
 		newURLCmd(),
 		newRoutesCmd(),
 		newStopCmd(),

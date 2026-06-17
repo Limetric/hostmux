@@ -60,6 +60,24 @@ hostmux url --domain example.com --prefix feature-x --name app
 hostmux url --domain example.com --name app --name admin
 ```
 
+## Routing an app you started yourself
+
+`hostmux run` owns the child process, but some dev servers are managed
+elsewhere (an IDE, Docker Compose, a Procfile, a watcher). Use `expose` to
+route to an already-running upstream without handing hostmux the process
+lifecycle:
+
+```sh
+hostmux expose --name api --upstream http://127.0.0.1:3000
+hostmux expose --domain example.com --name admin --upstream http://127.0.0.1:9000
+hostmux unexpose api
+```
+
+Exposed routes persist until you `unexpose` them (or the daemon restarts),
+appear in `hostmux routes` under a `manual:NAME` source, and accept the same
+`--domain` / `--label` options as `run`. The first `--name` is the route's
+identifier for `unexpose`.
+
 ## Behind cloudflared
 
 By default, `hostmux start` launches the daemon and it listens on `:8443`, generates a self-signed certificate if needed, and stores it at `~/.hostmux/tls/hostmux.crt` and `~/.hostmux/tls/hostmux.key`.
