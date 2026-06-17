@@ -7,6 +7,7 @@ var runRunner = runCommand
 func newRunCmd() *cobra.Command {
 	opts := runOptions{}
 	var names []string
+	var labels []string
 
 	cmd := &cobra.Command{
 		Use:   "run [--name NAME]... [--] COMMAND [ARGS...]",
@@ -34,6 +35,7 @@ the child so those tokens are not parsed as hostmux flags:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			argsLenAtDash := cmd.ArgsLenAtDash()
 			opts.Names = append([]string(nil), names...)
+			opts.Labels = append([]string(nil), labels...)
 			if argsLenAtDash < 0 {
 				opts.Argv = append([]string(nil), args...)
 			} else {
@@ -44,6 +46,7 @@ the child so those tokens are not parsed as hostmux flags:
 	}
 
 	cmd.Flags().StringArrayVar(&names, "name", nil, "repeatable hostname to register")
+	cmd.Flags().StringArrayVar(&labels, "label", nil, "repeatable key=value metadata attached to the route")
 	cmd.Flags().StringVar(&opts.SocketPath, "socket", "", "override Unix socket path")
 	cmd.Flags().StringVar(&opts.Domain, "domain", "", "expand bare subdomains using this base domain")
 	cmd.Flags().StringVar(&opts.Prefix, "prefix", "", "explicit hostname prefix (overrides worktree detection)")

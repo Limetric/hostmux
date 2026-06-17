@@ -18,6 +18,12 @@ const (
 	OpInfo     Op = "info"
 	OpBye      Op = "bye"
 	OpShutdown Op = "shutdown"
+	// OpExpose registers a route that outlives the connection. Unlike
+	// OpRegister, the route is owned by a caller-named source and is only
+	// removed by OpUnexpose (or daemon restart), not on disconnect.
+	OpExpose Op = "expose"
+	// OpUnexpose removes a route previously registered with OpExpose.
+	OpUnexpose Op = "unexpose"
 )
 
 // Message is the union of every NDJSON message both directions can carry.
@@ -27,6 +33,19 @@ type Message struct {
 	Op       Op       `json:"op,omitempty"`
 	Hosts    []string `json:"hosts,omitempty"`
 	Upstream string   `json:"upstream,omitempty"`
+
+	// Source names the route owner for ops that target a specific source by
+	// name (OpExpose / OpUnexpose). Ignored by OpRegister, which scopes the
+	// route to the connection's auto-assigned source.
+	Source string `json:"source,omitempty"`
+
+	// Metadata carried on OpRegister / OpExpose so routes can be attributed
+	// to a process and annotated by the user. All optional and ignored by
+	// daemons that predate the fields.
+	Labels  map[string]string `json:"labels,omitempty"`
+	PID     int               `json:"pid,omitempty"`
+	Command string            `json:"command,omitempty"`
+	Cwd     string            `json:"cwd,omitempty"`
 
 	// Response fields.
 	Ok      bool    `json:"ok,omitempty"`
@@ -47,6 +66,14 @@ type Entry struct {
 	Source   string   `json:"source"`
 	Hosts    []string `json:"hosts"`
 	Upstream string   `json:"upstream"`
+
+	// Optional route metadata. Omitted by daemons that predate the fields,
+	// so clients must treat zero values as "unknown".
+	Labels       map[string]string `json:"labels,omitempty"`
+	PID          int               `json:"pid,omitempty"`
+	Command      string            `json:"command,omitempty"`
+	Cwd          string            `json:"cwd,omitempty"`
+	RegisteredAt int64             `json:"registered_at,omitempty"` // unix seconds
 }
 
 // Encoder writes newline-delimited JSON Messages.

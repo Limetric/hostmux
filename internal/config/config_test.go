@@ -210,3 +210,29 @@ func TestLoadHidePortDefaultsFalse(t *testing.T) {
 		t.Fatalf("hide_port = true, want false (default)")
 	}
 }
+
+func TestRouterEntriesCarryLabels(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hostmux.toml")
+	content := `domain = "example.com"
+
+[[app]]
+hosts = ["api"]
+upstream = "http://127.0.0.1:8080"
+labels = { team = "web", kind = "api" }
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := cfg.RouterEntries()
+	if len(entries) != 1 {
+		t.Fatalf("entries = %+v", entries)
+	}
+	if entries[0].Labels["team"] != "web" || entries[0].Labels["kind"] != "api" {
+		t.Fatalf("labels = %v", entries[0].Labels)
+	}
+}

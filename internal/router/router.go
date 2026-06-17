@@ -5,6 +5,7 @@ import (
 	"slices"
 	"sort"
 	"sync"
+	"time"
 )
 
 // Entry is a snapshot view of one registration in the routing table.
@@ -15,6 +16,15 @@ type Entry struct {
 	Source   string
 	Hosts    []string
 	Upstream string
+
+	// Optional route metadata. Carried through Snapshot for richer route
+	// visibility (hostmux routes). RegisteredAt is stamped by the router on
+	// insert and ignored when supplied as input.
+	Labels       map[string]string
+	PID          int
+	Command      string
+	Cwd          string
+	RegisteredAt time.Time
 }
 
 // Router holds the host → upstream mapping. All mutating operations are
@@ -23,12 +33,18 @@ type Router struct {
 	mu       sync.RWMutex
 	byHost   map[string]*entry
 	bySource map[string][]*entry
+	now      func() time.Time
 }
 
 type entry struct {
-	source   string
-	hosts    []string
-	upstream string
+	source       string
+	hosts        []string
+	upstream     string
+	labels       map[string]string
+	pid          int
+	command      string
+	cwd          string
+	registeredAt time.Time
 }
 
 // New returns a fresh empty router.
@@ -36,6 +52,7 @@ func New() *Router {
 	return &Router{
 		byHost:   make(map[string]*entry),
 		bySource: make(map[string][]*entry),
+		now:      time.Now,
 	}
 }
 
@@ -63,41 +80,82 @@ func (r *Router) Lookup(host string) (string, bool) {
 // Hosts already owned by the same source are silently refreshed to the new
 // upstream.
 func (r *Router) Add(source string, hosts []string, upstream string) error {
-	if source == "" {
+	return r.AddEntry(Entry{Source: source, Hosts: hosts, Upstream: upstream})
+}
+
+// AddEntry is Add with optional route metadata (labels, PID, command, cwd).
+// RegisteredAt on the input is ignored; the router stamps it at insert time.
+func (r *Router) AddEntry(in Entry) error {
+	if in.Source == "" {
 		return fmt.Errorf("router: source must be non-empty")
 	}
-	if len(hosts) == 0 {
+	if len(in.Hosts) == 0 {
 		return fmt.Errorf("router: hosts must be non-empty")
 	}
-	if upstream == "" {
+	if in.Upstream == "" {
 		return fmt.Errorf("router: upstream must be non-empty")
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, h := range hosts {
-		if existing, ok := r.byHost[h]; ok && existing.source != source {
+	for _, h := range in.Hosts {
+		if existing, ok := r.byHost[h]; ok && existing.source != in.Source {
 			return fmt.Errorf("router: host %q already registered by %q", h, existing.source)
 		}
 	}
 	// Drop any existing same-source entries that contain these hosts so we
 	// can rebuild with the new upstream cleanly.
-	for _, h := range hosts {
-		if existing, ok := r.byHost[h]; ok && existing.source == source {
+	for _, h := range in.Hosts {
+		if existing, ok := r.byHost[h]; ok && existing.source == in.Source {
 			r.removeEntryLocked(existing)
 		}
 	}
-	e := &entry{source: source, hosts: append([]string(nil), hosts...), upstream: upstream}
-	for _, h := range hosts {
+	e := &entry{
+		source:       in.Source,
+		hosts:        append([]string(nil), in.Hosts...),
+		upstream:     in.Upstream,
+		labels:       copyLabels(in.Labels),
+		pid:          in.PID,
+		command:      in.Command,
+		cwd:          in.Cwd,
+		registeredAt: r.now(),
+	}
+	for _, h := range in.Hosts {
 		r.byHost[h] = e
 	}
-	r.bySource[source] = append(r.bySource[source], e)
+	r.bySource[in.Source] = append(r.bySource[in.Source], e)
 	return nil
+}
+
+func copyLabels(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // RemoveBySource removes every entry owned by the given source.
 func (r *Router) RemoveBySource(source string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.removeSourceLocked(source)
+}
+
+// RemoveSource removes every entry owned by source and reports whether the
+// source had any entries to begin with. Used by manual unexpose so the CLI
+// can distinguish "removed" from "nothing was registered under that name".
+func (r *Router) RemoveSource(source string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, existed := r.bySource[source]
+	r.removeSourceLocked(source)
+	return existed
+}
+
+func (r *Router) removeSourceLocked(source string) {
 	for _, e := range r.bySource[source] {
 		for _, h := range e.hosts {
 			if r.byHost[h] == e {
@@ -148,8 +206,18 @@ func (r *Router) ReplaceSource(source string, newEntries []Entry) error {
 		}
 	}
 	delete(r.bySource, source)
+	now := r.now()
 	for _, ne := range newEntries {
-		e := &entry{source: source, hosts: append([]string(nil), ne.Hosts...), upstream: ne.Upstream}
+		e := &entry{
+			source:       source,
+			hosts:        append([]string(nil), ne.Hosts...),
+			upstream:     ne.Upstream,
+			labels:       copyLabels(ne.Labels),
+			pid:          ne.PID,
+			command:      ne.Command,
+			cwd:          ne.Cwd,
+			registeredAt: now,
+		}
 		for _, h := range ne.Hosts {
 			r.byHost[h] = e
 		}
@@ -166,9 +234,14 @@ func (r *Router) Snapshot() []Entry {
 	for source, entries := range r.bySource {
 		for _, e := range entries {
 			out = append(out, Entry{
-				Source:   source,
-				Hosts:    append([]string(nil), e.hosts...),
-				Upstream: e.upstream,
+				Source:       source,
+				Hosts:        append([]string(nil), e.hosts...),
+				Upstream:     e.upstream,
+				Labels:       copyLabels(e.labels),
+				PID:          e.pid,
+				Command:      e.command,
+				Cwd:          e.cwd,
+				RegisteredAt: e.registeredAt,
 			})
 		}
 	}

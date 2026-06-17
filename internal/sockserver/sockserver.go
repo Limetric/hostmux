@@ -119,6 +119,61 @@ func (s *Server) Close() error {
 	return nil
 }
 
+// ManualSourcePrefix namespaces manually-exposed routes so they can never
+// collide with or masquerade as connection-scoped ("socket:N") or config
+// ("config") sources. The client supplies only the bare name.
+const ManualSourcePrefix = "manual:"
+
+// ManualSource returns the router source name for a manually-exposed route.
+func ManualSource(name string) string { return ManualSourcePrefix + name }
+
+// validManualName reports whether a manual-route name is a safe token: a
+// non-empty string of letters, digits, dash, dot, or underscore with no
+// colon (which would let a client forge an arbitrary source).
+func validManualName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-' || r == '.' || r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// handleExpose registers a connection-independent route owned by a
+// caller-named source. The route persists until OpUnexpose or daemon
+// restart, unlike OpRegister routes which are torn down on disconnect.
+func (s *Server) handleExpose(msg *sockproto.Message) error {
+	if !validManualName(msg.Source) {
+		return fmt.Errorf("invalid route name %q: use letters, digits, '-', '.', '_'", msg.Source)
+	}
+	return s.router.AddEntry(router.Entry{
+		Source:   ManualSource(msg.Source),
+		Hosts:    msg.Hosts,
+		Upstream: msg.Upstream,
+		Labels:   msg.Labels,
+		PID:      msg.PID,
+		Command:  msg.Command,
+		Cwd:      msg.Cwd,
+	})
+}
+
+// handleUnexpose removes a manually-exposed route by name.
+func (s *Server) handleUnexpose(msg *sockproto.Message) error {
+	if !validManualName(msg.Source) {
+		return fmt.Errorf("invalid route name %q", msg.Source)
+	}
+	if !s.router.RemoveSource(ManualSource(msg.Source)) {
+		return fmt.Errorf("no exposed route named %q", msg.Source)
+	}
+	return nil
+}
+
 func (s *Server) serveConn(c net.Conn) {
 	id := s.connID.Add(1)
 	source := fmt.Sprintf("socket:%d", id)
@@ -139,7 +194,27 @@ func (s *Server) serveConn(c net.Conn) {
 		}
 		switch msg.Op {
 		case sockproto.OpRegister:
-			if err := s.router.Add(source, msg.Hosts, msg.Upstream); err != nil {
+			if err := s.router.AddEntry(router.Entry{
+				Source:   source,
+				Hosts:    msg.Hosts,
+				Upstream: msg.Upstream,
+				Labels:   msg.Labels,
+				PID:      msg.PID,
+				Command:  msg.Command,
+				Cwd:      msg.Cwd,
+			}); err != nil {
+				_ = enc.Encode(&sockproto.Message{Ok: false, Error: err.Error()})
+				continue
+			}
+			_ = enc.Encode(&sockproto.Message{Ok: true})
+		case sockproto.OpExpose:
+			if err := s.handleExpose(msg); err != nil {
+				_ = enc.Encode(&sockproto.Message{Ok: false, Error: err.Error()})
+				continue
+			}
+			_ = enc.Encode(&sockproto.Message{Ok: true})
+		case sockproto.OpUnexpose:
+			if err := s.handleUnexpose(msg); err != nil {
 				_ = enc.Encode(&sockproto.Message{Ok: false, Error: err.Error()})
 				continue
 			}
@@ -148,7 +223,19 @@ func (s *Server) serveConn(c net.Conn) {
 			snap := s.router.Snapshot()
 			out := make([]sockproto.Entry, 0, len(snap))
 			for _, e := range snap {
-				out = append(out, sockproto.Entry{Source: e.Source, Hosts: e.Hosts, Upstream: e.Upstream})
+				wire := sockproto.Entry{
+					Source:   e.Source,
+					Hosts:    e.Hosts,
+					Upstream: e.Upstream,
+					Labels:   e.Labels,
+					PID:      e.PID,
+					Command:  e.Command,
+					Cwd:      e.Cwd,
+				}
+				if !e.RegisteredAt.IsZero() {
+					wire.RegisteredAt = e.RegisteredAt.Unix()
+				}
+				out = append(out, wire)
 			}
 			_ = enc.Encode(&sockproto.Message{Ok: true, Entries: out})
 		case sockproto.OpInfo:

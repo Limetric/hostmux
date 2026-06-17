@@ -339,3 +339,117 @@ func TestInfoOmitsPublicPortWhenUnset(t *testing.T) {
 		t.Fatalf("public_port = %d, want 0 (unset)", resp.PublicPort)
 	}
 }
+
+func TestRegisterRoundTripsMetadata(t *testing.T) {
+	path, _, _ := startServer(t)
+	c := dial(t, path)
+	defer c.Close()
+	enc := sockproto.NewEncoder(c)
+	dec := sockproto.NewDecoder(c)
+	if err := enc.Encode(&sockproto.Message{
+		Op:       sockproto.OpRegister,
+		Hosts:    []string{"meta.test"},
+		Upstream: "http://127.0.0.1:9000",
+		Labels:   map[string]string{"team": "web"},
+		PID:      4242,
+		Command:  "bun run dev",
+		Cwd:      "/work/app",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if resp, err := dec.Decode(); err != nil || !resp.Ok {
+		t.Fatalf("register: resp=%+v err=%v", resp, err)
+	}
+
+	enc.Encode(&sockproto.Message{Op: sockproto.OpList})
+	resp, err := dec.Decode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("entries = %+v", resp.Entries)
+	}
+	e := resp.Entries[0]
+	if e.Labels["team"] != "web" || e.PID != 4242 || e.Command != "bun run dev" || e.Cwd != "/work/app" {
+		t.Fatalf("metadata not round-tripped: %+v", e)
+	}
+	if e.RegisteredAt == 0 {
+		t.Fatalf("registered_at not stamped: %+v", e)
+	}
+}
+
+func TestExposePersistsAcrossDisconnect(t *testing.T) {
+	path, r, _ := startServer(t)
+	c := dial(t, path)
+	enc := sockproto.NewEncoder(c)
+	dec := sockproto.NewDecoder(c)
+	if err := enc.Encode(&sockproto.Message{Op: sockproto.OpExpose, Source: "api", Hosts: []string{"api.test"}, Upstream: "http://127.0.0.1:3000"}); err != nil {
+		t.Fatal(err)
+	}
+	if resp, err := dec.Decode(); err != nil || !resp.Ok {
+		t.Fatalf("expose: resp=%+v err=%v", resp, err)
+	}
+	c.Close()
+	// The route must survive disconnect (unlike OpRegister routes).
+	time.Sleep(100 * time.Millisecond)
+	if up, ok := r.Lookup("api.test"); !ok || up != "http://127.0.0.1:3000" {
+		t.Fatalf("exposed route should persist after disconnect: up=%q ok=%v", up, ok)
+	}
+
+	// Unexpose removes it.
+	c2 := dial(t, path)
+	defer c2.Close()
+	enc2 := sockproto.NewEncoder(c2)
+	dec2 := sockproto.NewDecoder(c2)
+	enc2.Encode(&sockproto.Message{Op: sockproto.OpUnexpose, Source: "api"})
+	if resp, err := dec2.Decode(); err != nil || !resp.Ok {
+		t.Fatalf("unexpose: resp=%+v err=%v", resp, err)
+	}
+	if _, ok := r.Lookup("api.test"); ok {
+		t.Fatal("route should be gone after unexpose")
+	}
+}
+
+func TestUnexposeUnknownReturnsError(t *testing.T) {
+	path, _, _ := startServer(t)
+	c := dial(t, path)
+	defer c.Close()
+	enc := sockproto.NewEncoder(c)
+	dec := sockproto.NewDecoder(c)
+	enc.Encode(&sockproto.Message{Op: sockproto.OpUnexpose, Source: "nope"})
+	resp, _ := dec.Decode()
+	if resp.Ok {
+		t.Fatal("expected error for unknown route")
+	}
+}
+
+func TestExposeRejectsSourceSpoofing(t *testing.T) {
+	path, r, _ := startServer(t)
+	// A real config route the manual route must not be able to masquerade as.
+	_ = r.Add("config", []string{"protected.test"}, "http://127.0.0.1:1")
+	c := dial(t, path)
+	defer c.Close()
+	enc := sockproto.NewEncoder(c)
+	dec := sockproto.NewDecoder(c)
+	// "config" contains no colon but exposing must namespace it; a colon
+	// in the name is rejected outright.
+	enc.Encode(&sockproto.Message{Op: sockproto.OpExpose, Source: "socket:1", Hosts: []string{"x.test"}, Upstream: "http://127.0.0.1:2"})
+	resp, _ := dec.Decode()
+	if resp.Ok {
+		t.Fatal("colon in name must be rejected")
+	}
+	// A benign name "config" is still namespaced to manual:config, so the
+	// real config route is untouched.
+	enc.Encode(&sockproto.Message{Op: sockproto.OpExpose, Source: "config", Hosts: []string{"y.test"}, Upstream: "http://127.0.0.1:3"})
+	resp, _ = dec.Decode()
+	if !resp.Ok {
+		t.Fatalf("benign name should be accepted: %s", resp.Error)
+	}
+	enc.Encode(&sockproto.Message{Op: sockproto.OpList})
+	resp, _ = dec.Decode()
+	for _, e := range resp.Entries {
+		if e.Source == "config" && len(e.Hosts) == 1 && e.Hosts[0] == "y.test" {
+			t.Fatal("manual route masqueraded as config source")
+		}
+	}
+}

@@ -208,3 +208,49 @@ func TestConcurrentMixedOperations(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestAddEntryStoresMetadataAndStampsTime(t *testing.T) {
+	r := New()
+	if err := r.AddEntry(Entry{
+		Source:   "socket:1",
+		Hosts:    []string{"a.test"},
+		Upstream: "http://127.0.0.1:9000",
+		Labels:   map[string]string{"team": "web"},
+		PID:      1234,
+		Command:  "bun run dev",
+		Cwd:      "/work",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	snap := r.Snapshot()
+	if len(snap) != 1 {
+		t.Fatalf("snapshot = %+v", snap)
+	}
+	e := snap[0]
+	if e.Labels["team"] != "web" || e.PID != 1234 || e.Command != "bun run dev" || e.Cwd != "/work" {
+		t.Fatalf("metadata not stored: %+v", e)
+	}
+	if e.RegisteredAt.IsZero() {
+		t.Fatal("RegisteredAt should be stamped")
+	}
+	// Labels must be a defensive copy: mutating the returned map must not
+	// affect the stored entry.
+	e.Labels["team"] = "mutated"
+	if r.Snapshot()[0].Labels["team"] != "web" {
+		t.Fatal("snapshot returned a shared label map")
+	}
+}
+
+func TestRemoveSourceReportsExistence(t *testing.T) {
+	r := New()
+	_ = r.Add("manual:api", []string{"api.test"}, "http://127.0.0.1:3000")
+	if !r.RemoveSource("manual:api") {
+		t.Fatal("expected RemoveSource to report existing source")
+	}
+	if _, ok := r.Lookup("api.test"); ok {
+		t.Fatal("route should be removed")
+	}
+	if r.RemoveSource("manual:api") {
+		t.Fatal("second RemoveSource should report no source")
+	}
+}

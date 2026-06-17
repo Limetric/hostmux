@@ -21,6 +21,7 @@ type runOptions struct {
 	Prefix     string
 	NoPrefix   bool
 	Names      []string
+	Labels     []string
 	Argv       []string
 }
 
@@ -30,6 +31,12 @@ func runCommand(opts runOptions) error {
 	}
 
 	if err := validateExplicitNames(opts.Names); err != nil {
+		fmt.Fprintf(os.Stderr, "hostmux run: %v\n", err)
+		return exitError{code: 2}
+	}
+
+	labels, err := parseLabels(opts.Labels)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "hostmux run: %v\n", err)
 		return exitError{code: 2}
 	}
@@ -108,7 +115,16 @@ func runCommand(opts runOptions) error {
 		publicURL = formatPublicURL(hosts[0], printScheme, daemonPort)
 	}
 	upstream := fmt.Sprintf("http://127.0.0.1:%d", port)
-	if err := enc.Encode(&sockproto.Message{Op: sockproto.OpRegister, Hosts: hosts, Upstream: upstream}); err != nil {
+	cwd, _ := os.Getwd()
+	if err := enc.Encode(&sockproto.Message{
+		Op:       sockproto.OpRegister,
+		Hosts:    hosts,
+		Upstream: upstream,
+		Labels:   labels,
+		PID:      os.Getpid(),
+		Command:  strings.Join(opts.Argv, " "),
+		Cwd:      cwd,
+	}); err != nil {
 		fmt.Fprintf(os.Stderr, "hostmux run: register: %v\n", err)
 		return exitError{code: 1}
 	}

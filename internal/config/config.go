@@ -46,8 +46,9 @@ type TLSBlock struct {
 
 // App is one persistent registration.
 type App struct {
-	Hosts    []string `toml:"hosts"`
-	Upstream string   `toml:"upstream"`
+	Hosts    []string          `toml:"hosts"`
+	Upstream string            `toml:"upstream"`
+	Labels   map[string]string `toml:"labels"`
 }
 
 // Load parses the TOML file at path, applies defaults, and validates.
@@ -127,6 +128,7 @@ func (c *Config) RouterEntries() []router.Entry {
 			Source:   "config",
 			Hosts:    append([]string(nil), app.Hosts...),
 			Upstream: app.Upstream,
+			Labels:   app.Labels,
 		})
 	}
 	return out
