@@ -90,20 +90,11 @@ func runForegroundDaemon(opts startOptions) error {
 	}
 
 	// Resolve listen address and TLS material.
-	var tlsBlock *config.TLSBlock
+	tlsBlock := tlsBlockFromConfig(cfg)
 	configSocket := ""
 	var currentDomain atomic.Value
 	currentDomain.Store("")
 	if cfg != nil {
-		if cfg.TLS != nil {
-			block := *cfg.TLS
-			if block.Listen == "" && cfg.Listen != "" {
-				block.Listen = cfg.Listen
-			}
-			tlsBlock = &block
-		} else if cfg.Listen != "" {
-			tlsBlock = &config.TLSBlock{Listen: cfg.Listen}
-		}
 		configSocket = cfg.Socket
 		currentDomain.Store(cfg.Domain)
 	}
@@ -115,6 +106,7 @@ func runForegroundDaemon(opts startOptions) error {
 	if err := tlsconfig.EnsurePair(effectiveTLS); err != nil {
 		return fmt.Errorf("hostmux start: tls: %w", err)
 	}
+	maybeAutoTrust(cfg, effectiveTLS.CertFile, log.Printf)
 	tlsCfg := &listener.TLSConfig{
 		Listen:   effectiveTLS.Listen,
 		CertFile: effectiveTLS.CertFile,

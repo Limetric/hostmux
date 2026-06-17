@@ -53,6 +53,10 @@ type TLSBlock struct {
 	Listen string `toml:"listen"`
 	Cert   string `toml:"cert"`
 	Key    string `toml:"key"`
+	// AutoTrust, when true, installs the managed certificate into the OS
+	// trust store on daemon start if it is not already trusted. Off by
+	// default to avoid surprising privilege prompts.
+	AutoTrust bool `toml:"auto_trust"`
 }
 
 // ProxyBlock holds optional hardening knobs for the proxy edge. All fields

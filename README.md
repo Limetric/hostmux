@@ -121,6 +121,28 @@ hide_port = true
 
 `hostmux url --no-prefix api` then prints `https://api.example.com`.
 
+## Trusting the dev certificate
+
+Browsers warn on hostmux's self-signed certificate until it is trusted by the
+OS. Install it once:
+
+```sh
+hostmux trust      # add the managed cert to the OS trust store
+hostmux untrust    # remove it again
+```
+
+Supported on macOS (`security`), Linux (`update-ca-*`, may prompt for sudo),
+and Windows (`certutil -user Root`). `trust` is idempotent — it exits 0 if the
+cert is already trusted unless you pass `--force`. Restart open browser tabs
+after trusting.
+
+To trust automatically on daemon start, set `auto_trust = true` under `[tls]`
+or export `HOSTMUX_TLS_AUTO_TRUST=1`. It is off by default to avoid surprising
+elevation prompts.
+
+> Note: hostmux currently trusts the self-signed leaf certificate directly. A
+> local-CA model (so renewals don't require re-trusting) is planned.
+
 ## HTTPS on port 443
 
 Browsers treat `https://app.localhost` as port **443** by default. Hostmux
