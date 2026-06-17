@@ -79,6 +79,7 @@ func newRootCmd() *cobra.Command {
 		newUnexposeCmd(),
 		newURLCmd(),
 		newRoutesCmd(),
+		newConfigCmd(),
 		newStopCmd(),
 		newVersionCmd(),
 	)

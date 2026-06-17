@@ -248,6 +248,128 @@ func (c *Config) RouterEntries() []router.Entry {
 	return out
 }
 
+// Severity classifies a Diagnostic.
+type Severity string
+
+const (
+	SeverityError   Severity = "error"
+	SeverityWarning Severity = "warning"
+	SeverityInfo    Severity = "info"
+)
+
+// Diagnostic is one finding from Check.
+type Diagnostic struct {
+	Severity Severity `json:"severity"`
+	Message  string   `json:"message"`
+}
+
+// Check parses and validates the config at path, returning ALL diagnostics
+// rather than failing on the first like Load. The returned *Config is nil
+// only when the file cannot be parsed at all. Used by `hostmux config check`
+// and `hostmux doctor`; callers treat any SeverityError diagnostic as a
+// validation failure.
+func Check(path string) (*Config, []Diagnostic) {
+	var cfg Config
+	if _, err := toml.DecodeFile(path, &cfg); err != nil {
+		return nil, []Diagnostic{{Severity: SeverityError, Message: fmt.Sprintf("parse %s: %v", path, err)}}
+	}
+	cfg.applyDefaults()
+	cfg.normalize()
+
+	var diags []Diagnostic
+	add := func(sev Severity, format string, args ...any) {
+		diags = append(diags, Diagnostic{Severity: sev, Message: fmt.Sprintf(format, args...)})
+	}
+
+	if err := ValidateListenAddr(cfg.Listen); err != nil {
+		add(SeverityError, "listen: %v", err)
+	}
+	if cfg.TLS != nil && cfg.TLS.Listen != "" {
+		if err := ValidateListenAddr(cfg.TLS.Listen); err != nil {
+			add(SeverityError, "tls.listen: %v", err)
+		}
+	}
+
+	switch cfg.LogFormat {
+	case "", LogFormatText, LogFormatJSON:
+	default:
+		add(SeverityError, "log_format must be %q or %q, got %q", LogFormatText, LogFormatJSON, cfg.LogFormat)
+	}
+
+	if cfg.Proxy != nil {
+		p := cfg.Proxy
+		for name, d := range map[string]Duration{
+			"read_header_timeout":     p.ReadHeaderTimeout,
+			"idle_timeout":            p.IdleTimeout,
+			"response_header_timeout": p.ResponseHeaderTimeout,
+			"dial_timeout":            p.DialTimeout,
+		} {
+			if d < 0 {
+				add(SeverityError, "proxy.%s must not be negative", name)
+			}
+		}
+		if p.MaxHeaderBytes < 0 {
+			add(SeverityError, "proxy.max_header_bytes must not be negative")
+		}
+		if p.UpstreamInsecureSkipVerify {
+			add(SeverityWarning, "proxy.upstream_insecure_skip_verify is on: HTTPS upstream certificates are not verified")
+		}
+	}
+
+	// TLS cert/key sanity: both or neither, and warn on missing files.
+	if cfg.TLS != nil {
+		certSet := cfg.TLS.Cert != ""
+		keySet := cfg.TLS.Key != ""
+		if certSet != keySet {
+			add(SeverityError, "tls: set both cert and key, or neither (cert=%q key=%q)", cfg.TLS.Cert, cfg.TLS.Key)
+		}
+	}
+
+	// Per-app validation and cross-app duplicate detection.
+	seenHost := make(map[string]int) // host -> app index that first claimed it
+	for i, app := range cfg.Apps {
+		if len(app.Hosts) == 0 {
+			add(SeverityError, "app[%d]: hosts must be non-empty", i)
+		}
+		for j, host := range app.Hosts {
+			if !hostnames.ValidHostToken(host) {
+				add(SeverityError, "app[%d].hosts[%d]: %q is not a valid hostname", i, j, host)
+				continue
+			}
+			if first, dup := seenHost[host]; dup {
+				add(SeverityError, "duplicate host %q in app[%d] (already used by app[%d])", host, i, first)
+			} else {
+				seenHost[host] = i
+			}
+		}
+		if app.Upstream == "" {
+			add(SeverityError, "app[%d]: upstream must be non-empty", i)
+		} else if err := validateUpstreamURL(app.Upstream); err != nil {
+			add(SeverityError, "app[%d]: %v", i, err)
+		}
+	}
+
+	// Warnings for common mismatches.
+	if effective := effectiveTLSListen(&cfg); effective != "" {
+		if _, portStr, err := net.SplitHostPort(effective); err == nil {
+			if port, perr := strconv.Atoi(portStr); perr == nil && cfg.Domain == "localhost" && port != 443 && port != 0 {
+				add(SeverityWarning, "domain is \"localhost\" but the HTTPS listener is on :%d; browsers expect :443 unless URLs include the port", port)
+			}
+		}
+	}
+
+	return &cfg, diags
+}
+
+// effectiveTLSListen returns the listen address the TLS edge will actually
+// bind: the tls.listen override when set, otherwise the top-level listen.
+func effectiveTLSListen(c *Config) string {
+	if c.TLS != nil && c.TLS.Listen != "" {
+		return c.TLS.Listen
+	}
+	return c.Listen
+}
+
 // Watcher reloads the config file on disk changes and pushes new Configs onto
 // a channel. Reload events are debounced (200ms) so a multi-write save shows
 // up as one event.

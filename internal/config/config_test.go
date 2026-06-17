@@ -341,3 +341,92 @@ func TestLoadRejectsBadListen(t *testing.T) {
 		t.Fatal("expected error for listen without colon")
 	}
 }
+
+func diagSeverities(diags []Diagnostic) (errs, warns int) {
+	for _, d := range diags {
+		switch d.Severity {
+		case SeverityError:
+			errs++
+		case SeverityWarning:
+			warns++
+		}
+	}
+	return
+}
+
+func TestCheckValid(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "c.toml")
+	writeFile(t, path, `domain = "example.com"
+[[app]]
+hosts = ["api"]
+upstream = "http://127.0.0.1:8080"
+`)
+	_, diags := Check(path)
+	if errs, _ := diagSeverities(diags); errs != 0 {
+		t.Fatalf("expected no errors, got %+v", diags)
+	}
+}
+
+func TestCheckDuplicateHosts(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "c.toml")
+	writeFile(t, path, `domain = "example.com"
+[[app]]
+hosts = ["api"]
+upstream = "http://127.0.0.1:8080"
+[[app]]
+hosts = ["api"]
+upstream = "http://127.0.0.1:9090"
+`)
+	_, diags := Check(path)
+	if errs, _ := diagSeverities(diags); errs == 0 {
+		t.Fatalf("expected duplicate-host error, got %+v", diags)
+	}
+}
+
+func TestCheckBadUpstreamAndListen(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "c.toml")
+	writeFile(t, path, `listen = "8443"
+[[app]]
+hosts = ["api"]
+upstream = "not-a-url"
+`)
+	_, diags := Check(path)
+	if errs, _ := diagSeverities(diags); errs < 2 {
+		t.Fatalf("expected at least 2 errors (listen + upstream), got %+v", diags)
+	}
+}
+
+func TestCheckLocalhostNon443Warning(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "c.toml")
+	writeFile(t, path, `domain = "localhost"
+listen = ":8443"
+[[app]]
+hosts = ["app"]
+upstream = "http://127.0.0.1:3000"
+`)
+	_, diags := Check(path)
+	errs, warns := diagSeverities(diags)
+	if errs != 0 {
+		t.Fatalf("unexpected errors: %+v", diags)
+	}
+	if warns == 0 {
+		t.Fatalf("expected a localhost/:443 warning, got %+v", diags)
+	}
+}
+
+func TestCheckParseError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "c.toml")
+	writeFile(t, path, "this is = = not toml")
+	cfg, diags := Check(path)
+	if cfg != nil {
+		t.Fatal("expected nil config on parse error")
+	}
+	if errs, _ := diagSeverities(diags); errs == 0 {
+		t.Fatalf("expected parse error, got %+v", diags)
+	}
+}
