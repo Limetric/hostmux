@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,6 +18,7 @@ import (
 func TestResolveDefaults(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	cfg, err := Resolve(nil)
 	if err != nil {
@@ -36,6 +38,7 @@ func TestResolveDefaults(t *testing.T) {
 func TestResolveHonorsOverrides(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	cfg, err := Resolve(&config.TLSBlock{
 		Listen: ":9443",
@@ -100,7 +103,10 @@ func TestEnsurePairCreatesFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat key: %v", err)
 	}
-	if keyInfo.Mode().Perm() != 0o600 {
+	// Windows does not honor Unix file permission bits, so skip the 0600
+	// assertion there (the key is still created with the requested mode on
+	// Unix-like systems).
+	if runtime.GOOS != "windows" && keyInfo.Mode().Perm() != 0o600 {
 		t.Fatalf("key mode = %o", keyInfo.Mode().Perm())
 	}
 }

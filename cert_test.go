@@ -19,7 +19,9 @@ func writeCertConfig(t *testing.T) (cfgPath, certPath, keyPath string) {
 	certPath = filepath.Join(dir, "hostmux.crt")
 	keyPath = filepath.Join(dir, "hostmux.key")
 	cfgPath = filepath.Join(dir, "hostmux.toml")
-	body := "domain = \"example.com\"\n[tls]\ncert = \"" + certPath + "\"\nkey = \"" + keyPath + "\"\n"
+	// Use TOML literal (single-quoted) strings so Windows backslash paths
+	// are not interpreted as escape sequences.
+	body := "domain = \"example.com\"\n[tls]\ncert = '" + certPath + "'\nkey = '" + keyPath + "'\n"
 	if err := os.WriteFile(cfgPath, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}

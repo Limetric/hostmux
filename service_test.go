@@ -10,15 +10,18 @@ import (
 )
 
 // fakeService wires the service seams to a temp home, fake binary, and a
-// recording runner, and restores them after the test.
-func fakeService(t *testing.T, goos, runnerOut string) (home string, calls *[]string) {
+// recording runner, and restores them after the test. The returned bin path
+// is OS-absolute (under a temp dir) so it survives filepath.Abs unchanged on
+// every platform.
+func fakeService(t *testing.T, goos, runnerOut string) (home, bin string, calls *[]string) {
 	t.Helper()
 	home = t.TempDir()
+	bin = filepath.Join(t.TempDir(), "hostmux")
 	recorded := &[]string{}
 	origGOOS, origHome, origBin, origRun := serviceGOOS, serviceHomeDir, serviceBinPath, serviceRunner
 	serviceGOOS = func() string { return goos }
 	serviceHomeDir = func() (string, error) { return home, nil }
-	serviceBinPath = func() (string, error) { return "/opt/hostmux/hostmux", nil }
+	serviceBinPath = func() (string, error) { return bin, nil }
 	serviceRunner = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		*recorded = append(*recorded, name+" "+strings.Join(args, " "))
 		return []byte(runnerOut), nil
@@ -26,11 +29,11 @@ func fakeService(t *testing.T, goos, runnerOut string) (home string, calls *[]st
 	t.Cleanup(func() {
 		serviceGOOS, serviceHomeDir, serviceBinPath, serviceRunner = origGOOS, origHome, origBin, origRun
 	})
-	return home, recorded
+	return home, bin, recorded
 }
 
 func TestServiceInstallDarwin(t *testing.T) {
-	home, calls := fakeService(t, "darwin", "")
+	home, bin, calls := fakeService(t, "darwin", "")
 	var buf bytes.Buffer
 	if err := runServiceInstall(serviceOptions{Writer: &buf}); err != nil {
 		t.Fatalf("install: %v", err)
@@ -40,8 +43,8 @@ func TestServiceInstallDarwin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plist not written: %v", err)
 	}
-	if !strings.Contains(string(body), "/opt/hostmux/hostmux") {
-		t.Fatalf("plist missing binary path:\n%s", body)
+	if !strings.Contains(string(body), bin) {
+		t.Fatalf("plist missing binary path %q:\n%s", bin, body)
 	}
 	if !containsCall(*calls, "launchctl load -w") {
 		t.Fatalf("expected launchctl load, got %v", *calls)
@@ -49,7 +52,7 @@ func TestServiceInstallDarwin(t *testing.T) {
 }
 
 func TestServiceInstallLinux(t *testing.T) {
-	home, calls := fakeService(t, "linux", "")
+	home, bin, calls := fakeService(t, "linux", "")
 	var buf bytes.Buffer
 	if err := runServiceInstall(serviceOptions{Writer: &buf}); err != nil {
 		t.Fatalf("install: %v", err)
@@ -59,8 +62,8 @@ func TestServiceInstallLinux(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unit not written: %v", err)
 	}
-	if !strings.Contains(string(body), "ExecStart=/opt/hostmux/hostmux start --foreground") {
-		t.Fatalf("unit ExecStart wrong:\n%s", body)
+	if !strings.Contains(string(body), "ExecStart="+bin+" start --foreground") {
+		t.Fatalf("unit ExecStart wrong (bin %q):\n%s", bin, body)
 	}
 	if !containsCall(*calls, "systemctl --user daemon-reload") || !containsCall(*calls, "systemctl --user enable --now hostmux.service") {
 		t.Fatalf("expected systemctl calls, got %v", *calls)
@@ -68,7 +71,7 @@ func TestServiceInstallLinux(t *testing.T) {
 }
 
 func TestServiceStatusLinux(t *testing.T) {
-	home, _ := fakeService(t, "linux", "active\n")
+	home, _, _ := fakeService(t, "linux", "active\n")
 	// Pre-create the unit file so installed=true.
 	unitDir := filepath.Join(home, ".config", "systemd", "user")
 	if err := os.MkdirAll(unitDir, 0o755); err != nil {
@@ -88,7 +91,7 @@ func TestServiceStatusLinux(t *testing.T) {
 }
 
 func TestServiceUninstallRemovesFile(t *testing.T) {
-	home, calls := fakeService(t, "darwin", "")
+	home, _, calls := fakeService(t, "darwin", "")
 	plistDir := filepath.Join(home, "Library", "LaunchAgents")
 	if err := os.MkdirAll(plistDir, 0o755); err != nil {
 		t.Fatal(err)

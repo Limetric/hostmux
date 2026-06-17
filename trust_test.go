@@ -51,7 +51,9 @@ func writeTrustConfig(t *testing.T) string {
 	cert := filepath.Join(dir, "hostmux.crt")
 	key := filepath.Join(dir, "hostmux.key")
 	path := filepath.Join(dir, "hostmux.toml")
-	body := "domain = \"example.com\"\n[tls]\ncert = \"" + cert + "\"\nkey = \"" + key + "\"\n"
+	// TOML literal (single-quoted) strings so Windows backslash paths are
+	// not interpreted as escape sequences.
+	body := "domain = \"example.com\"\n[tls]\ncert = '" + cert + "'\nkey = '" + key + "'\n"
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -146,7 +146,7 @@ func TestRunCommandRejectsPositionalsBeforeDoubleDash(t *testing.T) {
 	cmd := newRunCmd()
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(&stderr)
-	cmd.SetArgs([]string{"api", "--", "true"})
+	cmd.SetArgs([]string{"api", "--", "hostname"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("Execute() error = nil, want usage error")
@@ -283,7 +283,7 @@ func TestRunCommandUsesDashBetweenPrefixAndHost(t *testing.T) {
 		"--prefix", "feature-x",
 		"--name", "myapp.test",
 		"--",
-		"/usr/bin/true",
+		"hostname",
 	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -316,7 +316,7 @@ func TestRunCommandExpandsBareHostWithDomainFlag(t *testing.T) {
 		"--domain", "example.com",
 		"--name", "api",
 		"--",
-		"/usr/bin/true",
+		"hostname",
 	})
 	if code != 0 {
 		t.Fatalf("run command exit code = %d, stderr = %q", code, stderr)
@@ -334,7 +334,7 @@ func TestRunCommandPreservesFullHostnameWithDomainFlag(t *testing.T) {
 		"--domain", "example.com",
 		"--name", "admin.other.test",
 		"--",
-		"/usr/bin/true",
+		"hostname",
 	})
 	if code != 0 {
 		t.Fatalf("run command exit code = %d, stderr = %q", code, stderr)
@@ -353,7 +353,7 @@ func TestRunCommandAppliesPrefixBeforeDomainExpansion(t *testing.T) {
 		"--prefix", "feature-x",
 		"--name", "api",
 		"--",
-		"/usr/bin/true",
+		"hostname",
 	})
 	if code != 0 {
 		t.Fatalf("run command exit code = %d, stderr = %q", code, stderr)
@@ -370,7 +370,7 @@ func TestRunCommandUsesDaemonDomainForBareHost(t *testing.T) {
 	}, []string{
 		"--name", "api",
 		"--",
-		"/usr/bin/true",
+		"hostname",
 	})
 	if code != 0 {
 		t.Fatalf("run command exit code = %d, stderr = %q", code, stderr)
@@ -390,7 +390,7 @@ func TestRunCommandInfersNameFromPackageJSONWhenFlagOmitted(t *testing.T) {
 	}, []string{
 		"--domain", "example.com",
 		"--",
-		"/usr/bin/true",
+		"hostname",
 	})
 	if code != 0 {
 		t.Fatalf("run command exit code = %d, stderr = %q", code, stderr)
@@ -409,7 +409,7 @@ func TestRunCommandRegistersMultipleExplicitNamesInOrder(t *testing.T) {
 		"--name", "backend",
 		"--name", "admin",
 		"--",
-		"/usr/bin/true",
+		"hostname",
 	})
 	if code != 0 {
 		t.Fatalf("run command exit code = %d, stderr = %q", code, stderr)
@@ -453,7 +453,7 @@ func TestRunCommandRejectsEmptyExplicitName(t *testing.T) {
 	hosts, code, stderr := runRunCommandAndCapture(t, runServerScript{}, []string{
 		"--name=",
 		"--",
-		"/usr/bin/true",
+		"hostname",
 	})
 	if code == 0 {
 		t.Fatalf("run command exit code = %d, want non-zero", code)
@@ -471,7 +471,7 @@ func TestRunCommandRejectsMixedValidAndEmptyExplicitNames(t *testing.T) {
 		"--name", "backend",
 		"--name=",
 		"--",
-		"/usr/bin/true",
+		"hostname",
 	})
 	if code == 0 {
 		t.Fatalf("run command exit code = %d, want non-zero", code)
@@ -488,7 +488,7 @@ func TestRunCommandRejectsInvalidExplicitName(t *testing.T) {
 	hosts, code, stderr := runRunCommandAndCapture(t, runServerScript{}, []string{
 		"--name", "My App",
 		"--",
-		"/usr/bin/true",
+		"hostname",
 	})
 	if code == 0 {
 		t.Fatalf("run command exit code = %d, want non-zero", code)
@@ -505,7 +505,7 @@ func TestRunCommandRejectsExplicitNameWithPort(t *testing.T) {
 	hosts, code, stderr := runRunCommandAndCapture(t, runServerScript{}, []string{
 		"--name", "api:8080",
 		"--",
-		"/usr/bin/true",
+		"hostname",
 	})
 	if code == 0 {
 		t.Fatalf("run command exit code = %d, want non-zero", code)
@@ -522,7 +522,7 @@ func TestRunCommandRejectsExplicitNameWithSurroundingSpaces(t *testing.T) {
 	hosts, code, stderr := runRunCommandAndCapture(t, runServerScript{}, []string{
 		"--name", " api ",
 		"--",
-		"/usr/bin/true",
+		"hostname",
 	})
 	if code == 0 {
 		t.Fatalf("run command exit code = %d, want non-zero", code)
@@ -539,7 +539,7 @@ func TestRunCommandPassesThroughBareHostWhenNoDomainAvailable(t *testing.T) {
 	hosts, code, stderr := runRunCommandAndCapture(t, runServerScript{}, []string{
 		"--name", "api",
 		"--",
-		"/usr/bin/true",
+		"hostname",
 	})
 	if code != 0 {
 		t.Fatalf("run command exit code = %d, stderr = %q", code, stderr)
@@ -730,6 +730,7 @@ func runRunCommandAndCaptureInDir(t *testing.T, wd string, script runServerScrip
 func TestResolveRunSocketPathPrefersLiveDiscoveryOverConfig(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	t.Setenv("HOSTMUX_SOCKET", "")
 	t.Setenv("XDG_RUNTIME_DIR", "")
 	t.Setenv("XDG_CONFIG_HOME", "")
@@ -775,6 +776,7 @@ func TestResolveRunSocketPathPrefersLiveDiscoveryOverConfig(t *testing.T) {
 func TestResolveRunSocketPathUsesConfigWhenNoLiveDiscovery(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	t.Setenv("HOSTMUX_SOCKET", "")
 	t.Setenv("XDG_RUNTIME_DIR", "")
 	t.Setenv("XDG_CONFIG_HOME", "")

@@ -10,6 +10,7 @@ import (
 func TestResolveDefaultsToHomeWhenNothingSet(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	t.Setenv("HOSTMUX_SOCKET", "")
 	t.Setenv("XDG_RUNTIME_DIR", "")
 
@@ -26,6 +27,7 @@ func TestResolveDefaultsToHomeWhenNothingSet(t *testing.T) {
 func TestResolveUsesXDGRuntimeDir(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	t.Setenv("HOSTMUX_SOCKET", "")
 	t.Setenv("XDG_RUNTIME_DIR", tmp)
 
@@ -39,6 +41,7 @@ func TestResolveUsesXDGRuntimeDir(t *testing.T) {
 func TestLiveDiscoveryReturnsLiveSocket(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	t.Setenv("HOSTMUX_SOCKET", "")
 	t.Setenv("XDG_RUNTIME_DIR", "")
 
@@ -70,6 +73,7 @@ func TestLiveDiscoveryReturnsLiveSocket(t *testing.T) {
 func TestLiveDiscoveryFalseWhenMissingOrStale(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	t.Setenv("HOSTMUX_SOCKET", "")
 	t.Setenv("XDG_RUNTIME_DIR", "")
 
@@ -88,6 +92,7 @@ func TestLiveDiscoveryFalseWhenMissingOrStale(t *testing.T) {
 func TestResolveReadsDiscoveryFile(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	t.Setenv("HOSTMUX_SOCKET", "")
 	t.Setenv("XDG_RUNTIME_DIR", "")
 
@@ -116,6 +121,7 @@ func TestResolveReadsDiscoveryFile(t *testing.T) {
 func TestResolveIgnoresStaleDiscoveryFile(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	t.Setenv("HOSTMUX_SOCKET", "")
 	t.Setenv("XDG_RUNTIME_DIR", "")
 
@@ -144,6 +150,7 @@ func TestResolveIgnoresStaleDiscoveryFile(t *testing.T) {
 func TestResolveIgnoresDiscoveryRegularFile(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	t.Setenv("HOSTMUX_SOCKET", "")
 	t.Setenv("XDG_RUNTIME_DIR", "")
 
@@ -201,6 +208,7 @@ func TestDiscoveryAliveDoesNotCreatePIDFile(t *testing.T) {
 func TestResolveEnvOverridesDiscoveryFile(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	t.Setenv("HOSTMUX_SOCKET", "/from/env.sock")
 
 	hostmuxDir := filepath.Join(tmp, ".hostmux")
@@ -216,6 +224,7 @@ func TestResolveEnvOverridesDiscoveryFile(t *testing.T) {
 func TestResolveFlagOverridesEverything(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	t.Setenv("HOSTMUX_SOCKET", "/from/env.sock")
 
 	got, _ := Resolve(Options{Flag: "/from/flag.sock"})
@@ -227,6 +236,7 @@ func TestResolveFlagOverridesEverything(t *testing.T) {
 func TestResolveServeUsesConfigSocket(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	t.Setenv("HOSTMUX_SOCKET", "")
 	t.Setenv("XDG_RUNTIME_DIR", "")
 
@@ -239,6 +249,7 @@ func TestResolveServeUsesConfigSocket(t *testing.T) {
 func TestWriteAndRemoveDiscoveryFile(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	if err := WriteDiscovery("/some/sock"); err != nil {
 		t.Fatalf("WriteDiscovery: %v", err)
 	}

@@ -72,7 +72,10 @@ func TestTrustDarwinCommand(t *testing.T) {
 		t.Fatalf("calls = %+v", calls)
 	}
 	got := joinArgs(calls[0])
-	for _, want := range []string{"security add-trusted-cert", "-r trustRoot", "/Users/dev/Library/Keychains/login.keychain-db", certPath} {
+	// loginKeychain uses filepath.Join, so the separator matches the test
+	// host's OS; build the expected path the same way.
+	keychain := filepath.Join("/Users/dev", "Library", "Keychains", "login.keychain-db")
+	for _, want := range []string{"security add-trusted-cert", "-r trustRoot", keychain, certPath} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("command %q missing %q", got, want)
 		}

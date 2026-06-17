@@ -26,6 +26,7 @@ func TestResolveServeSocketPath_InvalidConfigReturnsError(t *testing.T) {
 
 func TestResolveServeSocketPath_UsesSocketFromConfig(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	t.Setenv("HOSTMUX_SOCKET", "")
 	t.Setenv("XDG_RUNTIME_DIR", "")
 
@@ -48,6 +49,7 @@ func TestResolveServeSocketPath_UsesSocketFromConfig(t *testing.T) {
 
 func TestResolveServeSocketPath_SocketFlagOverridesConfig(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	t.Setenv("HOSTMUX_SOCKET", "")
 	t.Setenv("XDG_RUNTIME_DIR", "")
 
@@ -71,6 +73,7 @@ func TestResolveServeSocketPath_SocketFlagOverridesConfig(t *testing.T) {
 
 func TestRunForegroundDaemonReturnsTLSListenError(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	t.Setenv("HOSTMUX_SOCKET", "")
 	t.Setenv("XDG_RUNTIME_DIR", "")
 
@@ -96,8 +99,11 @@ func TestRunForegroundDaemonReturnsTLSListenError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected listen error")
 	}
-	if !strings.Contains(err.Error(), "address already in use") {
-		t.Fatalf("error = %q, want address already in use", err)
+	// The OS phrasing differs (Unix: "address already in use"; Windows:
+	// "Only one usage of each socket address ... is normally permitted"), so
+	// assert on the portable, hostmux-supplied prefix instead.
+	if !strings.Contains(err.Error(), "listener: bind") {
+		t.Fatalf("error = %q, want a listener bind error", err)
 	}
 }
 
