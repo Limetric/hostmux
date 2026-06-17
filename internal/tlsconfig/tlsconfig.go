@@ -77,6 +77,32 @@ func EnsurePair(cfg Config) error {
 		return fmt.Errorf("partial tls state: cert=%s exists=%t key=%s exists=%t", cfg.CertFile, certExists, cfg.KeyFile, keyExists)
 	}
 
+	return generateAndWritePair(cfg)
+}
+
+// Renew regenerates the managed certificate/key pair, replacing any existing
+// files. The pair lock is held for the whole operation so a concurrent daemon
+// start cannot observe a half-written pair. Callers should restart the daemon
+// afterward to pick up the new certificate.
+func Renew(cfg Config) error {
+	lock, err := acquirePairLock(cfg)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+
+	if err := os.Remove(cfg.CertFile); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove old cert: %w", err)
+	}
+	if err := os.Remove(cfg.KeyFile); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove old key: %w", err)
+	}
+	return generateAndWritePair(cfg)
+}
+
+// generateAndWritePair generates a fresh keypair and writes it to disk. The
+// caller must hold the pair lock.
+func generateAndWritePair(cfg Config) error {
 	for _, dir := range uniqueDirs(filepath.Dir(cfg.CertFile), filepath.Dir(cfg.KeyFile)) {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return fmt.Errorf("create tls dir %s: %w", dir, err)
@@ -98,6 +124,49 @@ func EnsurePair(cfg Config) error {
 		return fmt.Errorf("load generated keypair %s %s: %w", cfg.CertFile, cfg.KeyFile, err)
 	}
 	return nil
+}
+
+// CertInfo is a human-readable summary of a parsed leaf certificate.
+type CertInfo struct {
+	CommonName  string
+	DNSNames    []string
+	IPAddresses []string
+	NotBefore   time.Time
+	NotAfter    time.Time
+	Serial      string
+}
+
+// Expired reports whether the certificate is outside its validity window at t.
+func (c *CertInfo) Expired(t time.Time) bool {
+	return t.Before(c.NotBefore) || t.After(c.NotAfter)
+}
+
+// Inspect parses the leaf certificate at certPath into a CertInfo.
+func Inspect(certPath string) (*CertInfo, error) {
+	pemBytes, err := os.ReadFile(certPath)
+	if err != nil {
+		return nil, fmt.Errorf("read cert %s: %w", certPath, err)
+	}
+	block, _ := pem.Decode(pemBytes)
+	if block == nil {
+		return nil, fmt.Errorf("%s is not PEM-encoded", certPath)
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse cert %s: %w", certPath, err)
+	}
+	ips := make([]string, 0, len(cert.IPAddresses))
+	for _, ip := range cert.IPAddresses {
+		ips = append(ips, ip.String())
+	}
+	return &CertInfo{
+		CommonName:  cert.Subject.CommonName,
+		DNSNames:    cert.DNSNames,
+		IPAddresses: ips,
+		NotBefore:   cert.NotBefore,
+		NotAfter:    cert.NotAfter,
+		Serial:      cert.SerialNumber.String(),
+	}, nil
 }
 
 func fillManagedPaths(cfg Config) (Config, error) {

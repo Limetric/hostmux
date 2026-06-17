@@ -143,6 +143,16 @@ elevation prompts.
 > Note: hostmux currently trusts the self-signed leaf certificate directly. A
 > local-CA model (so renewals don't require re-trusting) is planned.
 
+Inspect or rotate the managed certificate:
+
+```sh
+hostmux cert info     # subject, SANs, validity, expiry (add --json)
+hostmux cert path     # print the cert/key paths
+hostmux cert renew    # regenerate the managed cert (restart the daemon after)
+```
+
+`cert renew` refuses to overwrite a custom `tls.cert` unless you pass `--force`.
+
 ## HTTPS on port 443
 
 Browsers treat `https://app.localhost` as port **443** by default. Hostmux

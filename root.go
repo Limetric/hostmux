@@ -82,6 +82,7 @@ func newRootCmd() *cobra.Command {
 		newRoutesCmd(),
 		newConfigCmd(),
 		newCloudflareCmd(),
+		newCertCmd(),
 		newTrustCmd(),
 		newUntrustCmd(),
 		newCompletionCmd(),
