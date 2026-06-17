@@ -112,10 +112,14 @@ jobs:
         run: |
           ext=""
           if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+          # Artifact naming is deterministic: hostmux-<os>-<arch>[.exe].
           out="hostmux-${GOOS}-${GOARCH}${ext}"
           go build -ldflags="-s -w -X main.buildVersion=${GITHUB_REF_NAME} -X main.buildCommit=${GITHUB_SHA}" -o "$out" .
+          sha256sum "$out" > "$out.sha256"
           echo "ARTIFACT=$out" >> "$GITHUB_ENV"
-      - name: Upload release binary
+      - name: Upload release binary and checksum
         uses: softprops/action-gh-release@v3
         with:
-          files: ${{ env.ARTIFACT }}
+          files: |
+            ${{ env.ARTIFACT }}
+            ${{ env.ARTIFACT }}.sha256
