@@ -65,13 +65,20 @@ func (r *Router) Count() int {
 
 // Lookup returns the upstream URL for a host, or false if not registered.
 func (r *Router) Lookup(host string) (string, bool) {
+	upstream, _, ok := r.LookupSource(host)
+	return upstream, ok
+}
+
+// LookupSource returns the upstream URL and owning source for a host, or
+// false if not registered. The source is used for access-log attribution.
+func (r *Router) LookupSource(host string) (upstream, source string, ok bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	e, ok := r.byHost[host]
 	if !ok {
-		return "", false
+		return "", "", false
 	}
-	return e.upstream, true
+	return e.upstream, e.source, true
 }
 
 // Add registers all hosts under the given source pointing at upstream.

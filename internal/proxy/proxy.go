@@ -13,9 +13,31 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/Limetric/hostmux/internal/router"
 )
+
+// AccessRecord is one proxied-request observation handed to an AccessLogger.
+// It deliberately omits request headers and bodies so no credentials or
+// payloads are logged.
+type AccessRecord struct {
+	Method   string
+	Host     string
+	Path     string
+	Status   int
+	Bytes    int64
+	Duration time.Duration
+	Upstream string
+	Source   string
+	Err      string
+}
+
+// AccessLogger receives one record per proxied request when access logging
+// is enabled.
+type AccessLogger interface {
+	LogAccess(AccessRecord)
+}
 
 // Options configures the proxy handler.
 type Options struct {
@@ -24,6 +46,8 @@ type Options struct {
 	// hostmux's prior behavior. Pass a configured transport to apply
 	// upstream timeouts or TLS verification controls.
 	Transport http.RoundTripper
+	// Logger, if non-nil, receives one AccessRecord per request.
+	Logger AccessLogger
 }
 
 // New returns an http.Handler that routes incoming requests to the upstream
@@ -34,27 +58,60 @@ func New(r *router.Router) http.Handler {
 }
 
 // NewWithOptions is New with explicit configuration (custom upstream
-// transport, etc.).
+// transport, access logging, etc.).
 func NewWithOptions(r *router.Router, opts Options) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		var start time.Time
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		if opts.Logger != nil {
+			start = time.Now()
+			w = rec
+		}
 		host := stripPort(req.Host)
-		upstream, ok := r.Lookup(host)
+		upstream, source, ok := r.LookupSource(host)
+
+		// finish emits the access record (when logging is on) exactly once.
+		finish := func(errMsg string) {
+			if opts.Logger == nil {
+				return
+			}
+			opts.Logger.LogAccess(AccessRecord{
+				Method:   req.Method,
+				Host:     host,
+				Path:     req.URL.Path,
+				Status:   rec.status,
+				Bytes:    rec.bytes,
+				Duration: time.Since(start),
+				Upstream: upstream,
+				Source:   source,
+				Err:      errMsg,
+			})
+		}
+
 		if !ok {
+			rec.status = http.StatusNotFound
 			http.Error(w, fmt.Sprintf("no upstream for host %q (%d host(s) registered)", host, r.Count()), http.StatusNotFound)
+			finish("")
 			return
 		}
 		target, err := url.Parse(upstream)
 		if err != nil {
+			rec.status = http.StatusInternalServerError
 			http.Error(w, "invalid upstream URL", http.StatusInternalServerError)
+			finish(err.Error())
 			return
 		}
 		originalHost := req.Host
+		var proxyErr string
 		// Build a fresh ReverseProxy per request so the Director closure is
 		// race-free. Only the fields we actually need are set, so future
 		// additions to httputil.ReverseProxy cannot silently break us.
 		rp := &httputil.ReverseProxy{
-			Transport:    opts.Transport,
-			ErrorHandler: errorHandler,
+			Transport: opts.Transport,
+			ErrorHandler: func(w http.ResponseWriter, req *http.Request, err error) {
+				proxyErr = err.Error()
+				errorHandler(w, req, err)
+			},
 			Director: func(out *http.Request) {
 				out.URL.Scheme = target.Scheme
 				out.URL.Host = target.Host
@@ -75,8 +132,38 @@ func NewWithOptions(r *router.Router, opts Options) http.Handler {
 			},
 		}
 		rp.ServeHTTP(w, req)
+		finish(proxyErr)
 	})
 }
+
+// statusRecorder wraps an http.ResponseWriter to capture the status code and
+// byte count for access logging. It implements Unwrap so the standard
+// http.ResponseController machinery (used by ReverseProxy for flushing and
+// websocket hijacking) reaches the underlying writer — preserving streaming
+// and websocket upgrades through the wrapper.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+	wrote  bool
+	bytes  int64
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	if !s.wrote {
+		s.status = code
+		s.wrote = true
+	}
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusRecorder) Write(b []byte) (int, error) {
+	s.wrote = true
+	n, err := s.ResponseWriter.Write(b)
+	s.bytes += int64(n)
+	return n, err
+}
+
+func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
 // stripPort removes the :PORT suffix from a Host header, handling IPv6
 // bracketed addresses correctly.

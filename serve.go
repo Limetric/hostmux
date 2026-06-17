@@ -205,10 +205,18 @@ func runForegroundDaemon(opts startOptions) error {
 	}
 
 	var proxyBlock *config.ProxyBlock
+	var accessLog proxy.AccessLogger
 	if cfg != nil {
 		proxyBlock = cfg.Proxy
+		if cfg.AccessLog {
+			accessLog = newAccessLogger(os.Stderr, cfg.LogFormat)
+			log.Printf("hostmux start: access logging enabled (format=%s)", accessLogFormatName(cfg.LogFormat))
+		}
 	}
-	handler := proxy.NewWithOptions(r, proxy.Options{Transport: buildUpstreamTransport(proxyBlock)})
+	handler := proxy.NewWithOptions(r, proxy.Options{
+		Transport: buildUpstreamTransport(proxyBlock),
+		Logger:    accessLog,
+	})
 	lc := listener.Config{TLS: tlsCfg, Server: serverOptions(proxyBlock)}
 	servers, err := listener.Build(lc, handler)
 	if err != nil {

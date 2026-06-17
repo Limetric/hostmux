@@ -29,14 +29,22 @@ const (
 
 // Config is the parsed TOML config file.
 type Config struct {
-	Listen   string      `toml:"listen"`
-	Socket   string      `toml:"socket"`
-	Domain   string      `toml:"domain"`
-	HidePort bool        `toml:"hide_port"`
-	TLS      *TLSBlock   `toml:"tls"`
-	Proxy    *ProxyBlock `toml:"proxy"`
-	Apps     []App       `toml:"app"`
+	Listen    string      `toml:"listen"`
+	Socket    string      `toml:"socket"`
+	Domain    string      `toml:"domain"`
+	HidePort  bool        `toml:"hide_port"`
+	AccessLog bool        `toml:"access_log"`
+	LogFormat string      `toml:"log_format"`
+	TLS       *TLSBlock   `toml:"tls"`
+	Proxy     *ProxyBlock `toml:"proxy"`
+	Apps      []App       `toml:"app"`
 }
+
+// Log format values accepted in `log_format`.
+const (
+	LogFormatText = "text"
+	LogFormatJSON = "json"
+)
 
 // TLSBlock configures the TLS listener.
 type TLSBlock struct {
@@ -137,6 +145,11 @@ func (c *Config) normalize() {
 }
 
 func (c *Config) validate() error {
+	switch c.LogFormat {
+	case "", LogFormatText, LogFormatJSON:
+	default:
+		return fmt.Errorf("config: log_format must be %q or %q, got %q", LogFormatText, LogFormatJSON, c.LogFormat)
+	}
 	if c.Proxy != nil {
 		p := c.Proxy
 		for name, d := range map[string]Duration{

@@ -170,3 +170,68 @@ func TestUpstreamTLSVerification(t *testing.T) {
 		t.Fatalf("skip-verify transport: status = %d body=%q, want 200", rec2.Code, rec2.Body.String())
 	}
 }
+
+type capturingLogger struct{ recs []AccessRecord }
+
+func (c *capturingLogger) LogAccess(r AccessRecord) { c.recs = append(c.recs, r) }
+
+func TestAccessLogRecordsSuccess(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "hello")
+	}))
+	defer upstream.Close()
+
+	r := router.New()
+	_ = r.Add("config", []string{"app.local"}, upstream.URL)
+	log := &capturingLogger{}
+	h := NewWithOptions(r, Options{Logger: log})
+
+	req := httptest.NewRequest("GET", "/path", nil)
+	req.Host = "app.local"
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	if len(log.recs) != 1 {
+		t.Fatalf("recs = %d", len(log.recs))
+	}
+	rec := log.recs[0]
+	if rec.Method != "GET" || rec.Host != "app.local" || rec.Path != "/path" {
+		t.Fatalf("rec = %+v", rec)
+	}
+	if rec.Status != http.StatusOK {
+		t.Fatalf("status = %d", rec.Status)
+	}
+	if rec.Upstream != upstream.URL || rec.Source != "config" {
+		t.Fatalf("upstream/source = %q/%q", rec.Upstream, rec.Source)
+	}
+	if rec.Bytes != int64(len("hello")) {
+		t.Fatalf("bytes = %d", rec.Bytes)
+	}
+}
+
+func TestAccessLogRecords404(t *testing.T) {
+	r := router.New()
+	log := &capturingLogger{}
+	h := NewWithOptions(r, Options{Logger: log})
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "ghost.local"
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if len(log.recs) != 1 || log.recs[0].Status != http.StatusNotFound {
+		t.Fatalf("recs = %+v", log.recs)
+	}
+}
+
+func TestAccessLogRecordsUpstreamError(t *testing.T) {
+	r := router.New()
+	_ = r.Add("socket:1", []string{"dead.local"}, "http://127.0.0.1:1")
+	log := &capturingLogger{}
+	h := NewWithOptions(r, Options{Logger: log})
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "dead.local"
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if len(log.recs) != 1 {
+		t.Fatalf("recs = %+v", log.recs)
+	}
+	if log.recs[0].Status != http.StatusBadGateway || log.recs[0].Err == "" {
+		t.Fatalf("rec = %+v", log.recs[0])
+	}
+}

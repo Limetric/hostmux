@@ -299,3 +299,21 @@ func TestNoProxyBlockYieldsNil(t *testing.T) {
 		t.Fatalf("expected nil proxy block, got %+v", cfg.Proxy)
 	}
 }
+
+func TestLogFormatValidation(t *testing.T) {
+	dir := t.TempDir()
+	for _, tc := range []struct {
+		val string
+		ok  bool
+	}{{"", true}, {"text", true}, {"json", true}, {"xml", false}} {
+		path := filepath.Join(dir, "c.toml")
+		writeFile(t, path, "access_log = true\nlog_format = \""+tc.val+"\"\n")
+		_, err := Load(path)
+		if tc.ok && err != nil {
+			t.Errorf("log_format=%q: unexpected error %v", tc.val, err)
+		}
+		if !tc.ok && err == nil {
+			t.Errorf("log_format=%q: expected error", tc.val)
+		}
+	}
+}

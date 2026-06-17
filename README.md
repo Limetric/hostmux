@@ -221,6 +221,29 @@ Durations are TOML strings such as `"5s"`, `"500ms"`, or `"2m"`. On an
 upstream timeout the proxy returns **504 Gateway Timeout**; on a refused or
 unreachable upstream it returns **502 Bad Gateway**.
 
+## Access logs
+
+Enable per-request access logging to diagnose 404s (host routing), 502s
+(upstream down), and 504s (upstream too slow). Logs go to the daemon's
+stderr, so they appear in the foreground (`hostmux start --foreground`) or
+wherever the detached daemon's stderr is captured.
+
+```toml
+access_log = true
+log_format = "text"   # "text" (default) or "json"
+```
+
+Each line records method, host, path, status, latency, upstream, and source
+(`config`, `socket:N`, or `manual:NAME`). Request headers and bodies are
+never logged, so credentials and payloads stay out of the logs. Example:
+
+```
+access GET api.example.com/v1/users -> 200 (4.1ms) http://127.0.0.1:8080 src=socket:3
+```
+
+The `json` format emits one object per line for ingestion by log tooling.
+Like `[proxy]`, this setting is read at daemon start (not hot-reloaded).
+
 ## How it's built
 
 Most of this codebase was written with LLM agents. The architecture, edge case handling, and test coverage reflect that. It runs in production and the integration test catches regressions, but you should know how it was made.
