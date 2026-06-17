@@ -7,6 +7,7 @@ package listener
 
 import (
 	"net/http"
+	"time"
 
 	"golang.org/x/net/http2"
 )
@@ -18,6 +19,18 @@ type Config struct {
 	// TLS, if non-nil, enables an HTTP/1.1 + HTTP/2 listener on the configured
 	// TLS port.
 	TLS *TLSConfig
+	// Server carries optional server-side hardening knobs applied to every
+	// built http.Server. Zero values keep Go's defaults.
+	Server ServerOptions
+}
+
+// ServerOptions holds server-side timeout and size limits. All zero values
+// preserve net/http's defaults (effectively unlimited timeouts, 1 MiB
+// headers).
+type ServerOptions struct {
+	ReadHeaderTimeout time.Duration
+	IdleTimeout       time.Duration
+	MaxHeaderBytes    int
 }
 
 // TLSConfig configures the TLS listener.
@@ -63,6 +76,7 @@ func Build(cfg Config, h http.Handler) (Servers, error) {
 			Addr:    cfg.Plain,
 			Handler: h,
 		}
+		cfg.Server.apply(plainSrv)
 		plainSrv.Protocols = new(http.Protocols)
 		plainSrv.Protocols.SetHTTP1(true)
 		plainSrv.Protocols.SetUnencryptedHTTP2(true)
@@ -74,6 +88,7 @@ func Build(cfg Config, h http.Handler) (Servers, error) {
 			Addr:    cfg.TLS.Listen,
 			Handler: h,
 		}
+		cfg.Server.apply(tlsSrv)
 		// Default TLS config negotiates HTTP/2 via ALPN.
 		if err := http2.ConfigureServer(tlsSrv, &http2.Server{}); err != nil {
 			return Servers{}, err
@@ -81,4 +96,18 @@ func Build(cfg Config, h http.Handler) (Servers, error) {
 		s.TLS = tlsSrv
 	}
 	return s, nil
+}
+
+// apply sets the non-zero server options on srv, leaving Go's defaults in
+// place for any field left at its zero value.
+func (o ServerOptions) apply(srv *http.Server) {
+	if o.ReadHeaderTimeout > 0 {
+		srv.ReadHeaderTimeout = o.ReadHeaderTimeout
+	}
+	if o.IdleTimeout > 0 {
+		srv.IdleTimeout = o.IdleTimeout
+	}
+	if o.MaxHeaderBytes > 0 {
+		srv.MaxHeaderBytes = o.MaxHeaderBytes
+	}
 }

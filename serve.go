@@ -204,8 +204,12 @@ func runForegroundDaemon(opts startOptions) error {
 		log.Printf("hostmux start: listening on :%d but domain is localhost; browsers expect https:// on :443 unless the URL includes an explicit port. See README \"HTTPS on port 443\".", publicPort)
 	}
 
-	handler := proxy.New(r)
-	lc := listener.Config{TLS: tlsCfg}
+	var proxyBlock *config.ProxyBlock
+	if cfg != nil {
+		proxyBlock = cfg.Proxy
+	}
+	handler := proxy.NewWithOptions(r, proxy.Options{Transport: buildUpstreamTransport(proxyBlock)})
+	lc := listener.Config{TLS: tlsCfg, Server: serverOptions(proxyBlock)}
 	servers, err := listener.Build(lc, handler)
 	if err != nil {
 		tlsLn.Close()

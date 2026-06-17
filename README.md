@@ -192,6 +192,35 @@ upstream = "http://127.0.0.1:9000"
 
 Run with `hostmux start --config /path/to/hostmux.toml`. The file is hot-reloaded on save.
 
+## Proxy hardening
+
+By default hostmux uses Go's standard server and transport settings, which
+suit local development. When hostmux fronts apps over a tunnel you can opt
+into stricter limits with a `[proxy]` block. Every field is optional and
+defaults to Go's behavior, so existing configs are unaffected. Note: the
+`[proxy]` block is applied at daemon start, so changes require a restart
+(it is not hot-reloaded like routes).
+
+```toml
+[proxy]
+# Server-side limits.
+read_header_timeout = "10s"   # max time to read request headers (anti-Slowloris)
+idle_timeout = "120s"         # max idle keep-alive lifetime
+max_header_bytes = 1048576    # cap request header size (bytes); 0 = Go default (1 MiB)
+
+# Upstream transport.
+dial_timeout = "10s"            # max time to connect to an upstream
+response_header_timeout = "30s" # max wait for upstream response headers -> 504 on timeout
+
+# Disable TLS verification for HTTPS upstreams that present self-signed
+# certs. Off by default; enable only for trusted local dev servers.
+upstream_insecure_skip_verify = false
+```
+
+Durations are TOML strings such as `"5s"`, `"500ms"`, or `"2m"`. On an
+upstream timeout the proxy returns **504 Gateway Timeout**; on a refused or
+unreachable upstream it returns **502 Bad Gateway**.
+
 ## How it's built
 
 Most of this codebase was written with LLM agents. The architecture, edge case handling, and test coverage reflect that. It runs in production and the integration test catches regressions, but you should know how it was made.

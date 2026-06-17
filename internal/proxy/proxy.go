@@ -5,7 +5,10 @@
 package proxy
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -14,10 +17,25 @@ import (
 	"github.com/Limetric/hostmux/internal/router"
 )
 
+// Options configures the proxy handler.
+type Options struct {
+	// Transport is the RoundTripper used for upstream requests. When nil,
+	// httputil.ReverseProxy falls back to http.DefaultTransport, preserving
+	// hostmux's prior behavior. Pass a configured transport to apply
+	// upstream timeouts or TLS verification controls.
+	Transport http.RoundTripper
+}
+
 // New returns an http.Handler that routes incoming requests to the upstream
 // returned by r.Lookup for the request's Host. The original Host header is
 // preserved end-to-end.
 func New(r *router.Router) http.Handler {
+	return NewWithOptions(r, Options{})
+}
+
+// NewWithOptions is New with explicit configuration (custom upstream
+// transport, etc.).
+func NewWithOptions(r *router.Router, opts Options) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		host := stripPort(req.Host)
 		upstream, ok := r.Lookup(host)
@@ -35,6 +53,7 @@ func New(r *router.Router) http.Handler {
 		// race-free. Only the fields we actually need are set, so future
 		// additions to httputil.ReverseProxy cannot silently break us.
 		rp := &httputil.ReverseProxy{
+			Transport:    opts.Transport,
 			ErrorHandler: errorHandler,
 			Director: func(out *http.Request) {
 				out.URL.Scheme = target.Scheme
@@ -74,5 +93,13 @@ func stripPort(hostPort string) string {
 }
 
 func errorHandler(w http.ResponseWriter, req *http.Request, err error) {
+	// Map timeouts to 504 Gateway Timeout and everything else (refused
+	// connections, DNS failures, resets) to 502 Bad Gateway, so operators
+	// can tell "upstream too slow" apart from "upstream not answering".
+	var netErr net.Error
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) {
+		http.Error(w, fmt.Sprintf("upstream timed out: %v", err), http.StatusGatewayTimeout)
+		return
+	}
 	http.Error(w, fmt.Sprintf("upstream unreachable: %v", err), http.StatusBadGateway)
 }

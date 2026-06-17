@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func writeFile(t *testing.T, path, body string) {
@@ -234,5 +235,67 @@ labels = { team = "web", kind = "api" }
 	}
 	if entries[0].Labels["team"] != "web" || entries[0].Labels["kind"] != "api" {
 		t.Fatalf("labels = %v", entries[0].Labels)
+	}
+}
+
+func TestProxyBlockParses(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hostmux.toml")
+	writeFile(t, path, `
+[proxy]
+read_header_timeout = "10s"
+idle_timeout = "2m"
+response_header_timeout = "30s"
+dial_timeout = "5s"
+max_header_bytes = 1048576
+upstream_insecure_skip_verify = true
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := cfg.Proxy
+	if p == nil {
+		t.Fatal("proxy block nil")
+	}
+	if p.ReadHeaderTimeout.AsDuration() != 10*time.Second {
+		t.Fatalf("read_header_timeout = %v", p.ReadHeaderTimeout.AsDuration())
+	}
+	if p.IdleTimeout.AsDuration() != 2*time.Minute {
+		t.Fatalf("idle_timeout = %v", p.IdleTimeout.AsDuration())
+	}
+	if p.ResponseHeaderTimeout.AsDuration() != 30*time.Second {
+		t.Fatalf("response_header_timeout = %v", p.ResponseHeaderTimeout.AsDuration())
+	}
+	if p.DialTimeout.AsDuration() != 5*time.Second {
+		t.Fatalf("dial_timeout = %v", p.DialTimeout.AsDuration())
+	}
+	if p.MaxHeaderBytes != 1048576 {
+		t.Fatalf("max_header_bytes = %d", p.MaxHeaderBytes)
+	}
+	if !p.UpstreamInsecureSkipVerify {
+		t.Fatal("upstream_insecure_skip_verify should be true")
+	}
+}
+
+func TestProxyBlockRejectsBadDuration(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hostmux.toml")
+	writeFile(t, path, "[proxy]\nidle_timeout = \"notaduration\"\n")
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected error for bad duration")
+	}
+}
+
+func TestNoProxyBlockYieldsNil(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hostmux.toml")
+	writeFile(t, path, "domain = \"example.com\"\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Proxy != nil {
+		t.Fatalf("expected nil proxy block, got %+v", cfg.Proxy)
 	}
 }

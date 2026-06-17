@@ -29,12 +29,13 @@ const (
 
 // Config is the parsed TOML config file.
 type Config struct {
-	Listen   string    `toml:"listen"`
-	Socket   string    `toml:"socket"`
-	Domain   string    `toml:"domain"`
-	HidePort bool      `toml:"hide_port"`
-	TLS      *TLSBlock `toml:"tls"`
-	Apps     []App     `toml:"app"`
+	Listen   string      `toml:"listen"`
+	Socket   string      `toml:"socket"`
+	Domain   string      `toml:"domain"`
+	HidePort bool        `toml:"hide_port"`
+	TLS      *TLSBlock   `toml:"tls"`
+	Proxy    *ProxyBlock `toml:"proxy"`
+	Apps     []App       `toml:"app"`
 }
 
 // TLSBlock configures the TLS listener.
@@ -43,6 +44,57 @@ type TLSBlock struct {
 	Cert   string `toml:"cert"`
 	Key    string `toml:"key"`
 }
+
+// ProxyBlock holds optional hardening knobs for the proxy edge. All fields
+// default to zero, which preserves hostmux's prior behavior (Go's defaults):
+// no server-side timeouts, the standard upstream transport, and TLS
+// verification enabled for HTTPS upstreams.
+type ProxyBlock struct {
+	// ReadHeaderTimeout bounds how long the server waits for request
+	// headers. Mitigates slow-header (Slowloris) clients. Server-side.
+	ReadHeaderTimeout Duration `toml:"read_header_timeout"`
+	// IdleTimeout bounds how long an idle keep-alive connection is kept
+	// open. Server-side.
+	IdleTimeout Duration `toml:"idle_timeout"`
+	// ResponseHeaderTimeout bounds how long the proxy waits for an upstream
+	// to start sending response headers before returning 504. Upstream
+	// transport.
+	ResponseHeaderTimeout Duration `toml:"response_header_timeout"`
+	// DialTimeout bounds how long the proxy waits to establish a TCP
+	// connection to the upstream. Upstream transport.
+	DialTimeout Duration `toml:"dial_timeout"`
+	// MaxHeaderBytes caps the size of request headers the server accepts.
+	// Server-side. Zero uses Go's default (1 MiB).
+	MaxHeaderBytes int `toml:"max_header_bytes"`
+	// UpstreamInsecureSkipVerify disables TLS certificate verification for
+	// HTTPS upstreams. Off by default; enable only for trusted local dev
+	// servers that present self-signed certificates.
+	UpstreamInsecureSkipVerify bool `toml:"upstream_insecure_skip_verify"`
+}
+
+// Duration is a time.Duration that decodes from a TOML string such as "5s"
+// or "120s". A bare TOML integer is rejected to avoid ambiguity between
+// seconds and nanoseconds.
+type Duration time.Duration
+
+// UnmarshalText implements encoding.TextUnmarshaler so BurntSushi/toml can
+// decode duration strings.
+func (d *Duration) UnmarshalText(text []byte) error {
+	v, err := time.ParseDuration(strings.TrimSpace(string(text)))
+	if err != nil {
+		return fmt.Errorf("invalid duration %q: %w", string(text), err)
+	}
+	*d = Duration(v)
+	return nil
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (d Duration) MarshalText() ([]byte, error) {
+	return []byte(time.Duration(d).String()), nil
+}
+
+// AsDuration returns the value as a time.Duration.
+func (d Duration) AsDuration() time.Duration { return time.Duration(d) }
 
 // App is one persistent registration.
 type App struct {
@@ -85,6 +137,22 @@ func (c *Config) normalize() {
 }
 
 func (c *Config) validate() error {
+	if c.Proxy != nil {
+		p := c.Proxy
+		for name, d := range map[string]Duration{
+			"read_header_timeout":     p.ReadHeaderTimeout,
+			"idle_timeout":            p.IdleTimeout,
+			"response_header_timeout": p.ResponseHeaderTimeout,
+			"dial_timeout":            p.DialTimeout,
+		} {
+			if d < 0 {
+				return fmt.Errorf("config: proxy.%s must not be negative", name)
+			}
+		}
+		if p.MaxHeaderBytes < 0 {
+			return fmt.Errorf("config: proxy.max_header_bytes must not be negative")
+		}
+	}
 	for i, app := range c.Apps {
 		if len(app.Hosts) == 0 {
 			return fmt.Errorf("config: app[%d]: hosts must be non-empty", i)

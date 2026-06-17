@@ -1,11 +1,13 @@
 package proxy
 
 import (
+	"crypto/tls"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Limetric/hostmux/internal/router"
 )
@@ -115,5 +117,56 @@ func TestUpstreamUnreachableReturns502(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestUpstreamResponseHeaderTimeoutReturns504(t *testing.T) {
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		io.WriteString(w, "late")
+	}))
+	defer slow.Close()
+
+	r := router.New()
+	_ = r.Add("test", []string{"slow.local"}, slow.URL)
+	transport := &http.Transport{ResponseHeaderTimeout: 20 * time.Millisecond}
+	h := NewWithOptions(r, Options{Transport: transport})
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "slow.local"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want 504", rec.Code)
+	}
+}
+
+func TestUpstreamTLSVerification(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "secure ok")
+	}))
+	defer upstream.Close()
+
+	r := router.New()
+	_ = r.Add("test", []string{"sec.local"}, upstream.URL) // https://127.0.0.1:PORT
+
+	// Default transport verifies the (untrusted self-signed) cert and fails.
+	verifying := New(r)
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "sec.local"
+	rec := httptest.NewRecorder()
+	verifying.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("verifying transport: status = %d, want 502", rec.Code)
+	}
+
+	// With verification disabled, the request succeeds.
+	skip := NewWithOptions(r, Options{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}})
+	req2 := httptest.NewRequest("GET", "/", nil)
+	req2.Host = "sec.local"
+	rec2 := httptest.NewRecorder()
+	skip.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("skip-verify transport: status = %d body=%q, want 200", rec2.Code, rec2.Body.String())
 	}
 }

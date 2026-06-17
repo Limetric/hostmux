@@ -125,3 +125,40 @@ func TestBuildWithOnlyTLSReturnsTLSOnly(t *testing.T) {
 		t.Fatal("Plain = non-nil, want nil")
 	}
 }
+
+func TestBuildAppliesServerOptions(t *testing.T) {
+	opts := ServerOptions{
+		ReadHeaderTimeout: 7 * time.Second,
+		IdleTimeout:       11 * time.Second,
+		MaxHeaderBytes:    4096,
+	}
+	servers, err := Build(Config{
+		Plain:  "127.0.0.1:0",
+		TLS:    &TLSConfig{Listen: "127.0.0.1:0"},
+		Server: opts,
+	}, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, srv := range servers.All() {
+		if srv.ReadHeaderTimeout != 7*time.Second {
+			t.Errorf("ReadHeaderTimeout = %v", srv.ReadHeaderTimeout)
+		}
+		if srv.IdleTimeout != 11*time.Second {
+			t.Errorf("IdleTimeout = %v", srv.IdleTimeout)
+		}
+		if srv.MaxHeaderBytes != 4096 {
+			t.Errorf("MaxHeaderBytes = %d", srv.MaxHeaderBytes)
+		}
+	}
+}
+
+func TestBuildZeroServerOptionsKeepsDefaults(t *testing.T) {
+	servers, err := Build(Config{TLS: &TLSConfig{Listen: "127.0.0.1:0"}}, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if servers.TLS.ReadHeaderTimeout != 0 || servers.TLS.MaxHeaderBytes != 0 {
+		t.Fatalf("expected Go defaults, got rht=%v mhb=%d", servers.TLS.ReadHeaderTimeout, servers.TLS.MaxHeaderBytes)
+	}
+}
