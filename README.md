@@ -143,6 +143,20 @@ hide_port = true
 
 `hostmux url --no-prefix api` then prints `https://api.example.com`.
 
+## Running hostmux as a service
+
+Keep hostmux running across logins with a user-level service:
+
+```sh
+hostmux service install     # macOS launchd agent or Linux systemd user unit
+hostmux service status      # installed? running?
+hostmux service uninstall
+```
+
+No root is needed for the default user-level install. Windows has no native
+service support yet — run `hostmux start` from a logon script or wrap
+`hostmux start --foreground` with Task Scheduler / nssm.
+
 ## Trusting the dev certificate
 
 Browsers warn on hostmux's self-signed certificate until it is trusted by the
