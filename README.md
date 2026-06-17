@@ -54,6 +54,10 @@ hostmux run --domain example.com -- bun run dev
 # Full hostnames skip domain expansion, but still use the normal prefix logic unless --no-prefix is set.
 hostmux run --name myapp.example.org -- bun run dev
 
+# Hold the URL until the dev server is actually accepting requests (avoids a transient 502).
+hostmux run --wait --name app -- bun run dev
+hostmux run --wait-url /healthz --wait-timeout 60s --name api -- go run ./cmd/api
+
 # Print the final URL using the same domain/prefix logic as `run`.
 hostmux url --domain example.com --name app
 hostmux url --domain example.com --prefix feature-x --name app

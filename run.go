@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/Limetric/hostmux/internal/childproc"
 	"github.com/Limetric/hostmux/internal/daemon"
@@ -16,13 +17,16 @@ import (
 )
 
 type runOptions struct {
-	SocketPath string
-	Domain     string
-	Prefix     string
-	NoPrefix   bool
-	Names      []string
-	Labels     []string
-	Argv       []string
+	SocketPath  string
+	Domain      string
+	Prefix      string
+	NoPrefix    bool
+	Names       []string
+	Labels      []string
+	Wait        bool
+	WaitURL     string
+	WaitTimeout time.Duration
+	Argv        []string
 }
 
 func runCommand(opts runOptions) error {
@@ -39,6 +43,11 @@ func runCommand(opts runOptions) error {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hostmux run: %v\n", err)
 		return exitError{code: 2}
+	}
+
+	// --wait-url implies --wait.
+	if opts.WaitURL != "" {
+		opts.Wait = true
 	}
 
 	names, err := resolveRequestedNames(opts.Names)
@@ -138,28 +147,87 @@ func runCommand(opts runOptions) error {
 		return exitError{code: 1}
 	}
 
-	// Tell the user where to hit (full URL so terminals linkify it).
-	for _, h := range hosts {
-		edge := formatPublicURL(h, printScheme, daemonPort)
-		fmt.Fprintf(os.Stderr, "→ %s → %s\n", edge, upstream)
+	// announce prints the edge → upstream lines (full URL so terminals
+	// linkify it). With --wait we defer this until the upstream is ready.
+	announce := func() {
+		for _, h := range hosts {
+			edge := formatPublicURL(h, printScheme, daemonPort)
+			fmt.Fprintf(os.Stderr, "→ %s → %s\n", edge, upstream)
+		}
 	}
 
-	// Run the child to completion. Frameworks that ignore PORT (Vite, Astro,
-	// etc.) get --port/--host injected like portless does.
+	// Run the child. Frameworks that ignore PORT (Vite, Astro, etc.) get
+	// --port/--host injected like portless does.
 	const bindHost = "127.0.0.1"
 	argv := childproc.InjectFrameworkArgs(opts.Argv, port, bindHost)
-	code, err := childproc.Run(context.Background(), childproc.RunOpts{
+	childRunOpts := childproc.RunOpts{
 		Port:       port,
 		Host:       bindHost,
 		HostmuxURL: publicURL,
 		Argv:       argv,
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "hostmux run: child: %v\n", err)
+	}
+
+	if !opts.Wait {
+		announce()
+		code, err := childproc.Run(context.Background(), childRunOpts)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "hostmux run: child: %v\n", err)
+			return exitError{code: 1}
+		}
+		if code != 0 {
+			return exitError{code: code}
+		}
+		return nil
+	}
+
+	// --wait: start the child, then hold the URLs until the upstream accepts
+	// requests so the user doesn't hit a transient 502.
+	waitPath := normalizeWaitPath(opts.WaitURL)
+	timeout := opts.WaitTimeout
+	if timeout <= 0 {
+		timeout = defaultWaitTimeout
+	}
+	if waitPath != "" {
+		fmt.Fprintf(os.Stderr, "hostmux run: waiting for http://%s:%d%s (timeout %s)\n", bindHost, port, waitPath, timeout)
+	} else {
+		fmt.Fprintf(os.Stderr, "hostmux run: waiting for %s:%d to accept connections (timeout %s)\n", bindHost, port, timeout)
+	}
+
+	childDone := make(chan struct{})
+	var childCode int
+	var childErr error
+	go func() {
+		childCode, childErr = childproc.Run(context.Background(), childRunOpts)
+		close(childDone)
+	}()
+
+	switch waitForReady(bindHost, port, waitPath, timeout, 100*time.Millisecond, childDone, nil) {
+	case readyChildExited:
+		// Child exited before it ever became ready; surface its outcome.
+		<-childDone
+		if childErr != nil {
+			fmt.Fprintf(os.Stderr, "hostmux run: child exited before ready: %v\n", childErr)
+			return exitError{code: 1}
+		}
+		fmt.Fprintf(os.Stderr, "hostmux run: child exited before ready (code %d)\n", childCode)
+		if childCode != 0 {
+			return exitError{code: childCode}
+		}
+		return nil
+	case readyTimeout:
+		fmt.Fprintf(os.Stderr, "hostmux run: upstream not ready after %s; announcing URLs anyway\n", timeout)
+		announce()
+	case readyOK:
+		announce()
+	}
+
+	<-childDone
+	if childErr != nil {
+		fmt.Fprintf(os.Stderr, "hostmux run: child: %v\n", childErr)
 		return exitError{code: 1}
 	}
-	if code != 0 {
-		return exitError{code: code}
+	if childCode != 0 {
+		return exitError{code: childCode}
 	}
 	return nil
 }

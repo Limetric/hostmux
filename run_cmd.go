@@ -51,6 +51,9 @@ the child so those tokens are not parsed as hostmux flags:
 	cmd.Flags().StringVar(&opts.Domain, "domain", "", "expand bare subdomains using this base domain")
 	cmd.Flags().StringVar(&opts.Prefix, "prefix", "", "explicit hostname prefix (overrides worktree detection)")
 	cmd.Flags().BoolVar(&opts.NoPrefix, "no-prefix", false, "disable worktree auto-prefixing")
+	cmd.Flags().BoolVar(&opts.Wait, "wait", false, "wait for the upstream to accept connections before announcing URLs")
+	cmd.Flags().StringVar(&opts.WaitURL, "wait-url", "", "wait for an HTTP GET of this path to return < 400 (implies --wait)")
+	cmd.Flags().DurationVar(&opts.WaitTimeout, "wait-timeout", defaultWaitTimeout, "how long to wait for readiness")
 
 	return cmd
 }
