@@ -12,7 +12,7 @@ func newRoutesCmd() *cobra.Command {
 		Short: "List registered routes",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 0 {
-				return usageErrorf("usage: hostmux routes [--socket PATH]")
+				return usageErrorf("usage: hostmux routes [--socket PATH] [--json] [--wide]")
 			}
 			return nil
 		},
@@ -23,6 +23,8 @@ func newRoutesCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&opts.SocketPath, "socket", "", "override Unix socket path")
+	cmd.Flags().BoolVar(&opts.JSON, "json", false, "output routes as JSON")
+	cmd.Flags().BoolVarP(&opts.Wide, "wide", "w", false, "show extra columns (age, pid, labels, command)")
 
 	return cmd
 }

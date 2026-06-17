@@ -30,7 +30,7 @@ hostmux start
 # Run a dev server and register a subdomain for it (starts the daemon in the background if it is not already running).
 hostmux run --domain example.com --name myapp -- bun run dev
 
-# Inspect the active routes.
+# Inspect the active routes (add --wide for age/pid/labels/command, --json for scripts).
 hostmux routes
 
 # Print the URL for a route without starting anything.
