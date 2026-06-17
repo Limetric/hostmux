@@ -15,8 +15,7 @@ import (
 // fakeTrustState records trust operations issued via the injected runner so a
 // test can assert behavior without touching the real OS trust store.
 type fakeTrustState struct {
-	trusted bool
-	calls   []string
+	calls []string
 }
 
 // installFakeTrust points baseTrustOptions/currentGOOS at an in-memory trust
