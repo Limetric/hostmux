@@ -201,7 +201,7 @@ func TestRoutesCommandRejectsPositionalArgs(t *testing.T) {
 	if exitErr.code != 2 {
 		t.Fatalf("exit code = %d, want 2", exitErr.code)
 	}
-	if got, want := exitErr.text, "usage: hostmux routes [--socket PATH]"; got != want {
+	if got, want := exitErr.text, "usage: hostmux routes [--socket PATH] [--json] [--wide]"; got != want {
 		t.Fatalf("usage = %q, want %q", got, want)
 	}
 }

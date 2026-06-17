@@ -79,6 +79,7 @@ func newRootCmd() *cobra.Command {
 		newExposeCmd(),
 		newUnexposeCmd(),
 		newURLCmd(),
+		newShareCmd(),
 		newRoutesCmd(),
 		newConfigCmd(),
 		newCloudflareCmd(),

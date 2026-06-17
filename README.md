@@ -82,6 +82,22 @@ appear in `hostmux routes` under a `manual:NAME` source, and accept the same
 `--domain` / `--label` options as `run`. The first `--name` is the route's
 identifier for `unexpose`.
 
+## Sharing a route
+
+Print a route's public URL and details, with a scannable QR code for testing
+from a phone:
+
+```sh
+hostmux share api          # URL, upstream, source, + QR when stdout is a TTY
+hostmux share --qr --name api
+hostmux share --all        # every registered route
+hostmux share api --json   # structured output for tooling
+```
+
+A QR code renders by default in an interactive terminal (`--qr` / `--no-qr`
+force it). Unregistered names still print a generated URL, clearly marked as
+not currently registered.
+
 ## Behind cloudflared
 
 By default, `hostmux start` launches the daemon and it listens on `:8443`, generates a self-signed certificate if needed, and stores it at `~/.hostmux/tls/hostmux.crt` and `~/.hostmux/tls/hostmux.key`.
