@@ -80,6 +80,7 @@ func newRootCmd() *cobra.Command {
 		newURLCmd(),
 		newRoutesCmd(),
 		newConfigCmd(),
+		newCompletionCmd(),
 		newStopCmd(),
 		newVersionCmd(),
 	)
