@@ -317,3 +317,27 @@ func TestLogFormatValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateListenAddr(t *testing.T) {
+	good := []string{":8443", ":443", "0.0.0.0:443", "127.0.0.1:8443", "[::1]:443", ":0"}
+	for _, a := range good {
+		if err := ValidateListenAddr(a); err != nil {
+			t.Errorf("ValidateListenAddr(%q) = %v, want nil", a, err)
+		}
+	}
+	bad := []string{"", "8443", "localhost", ":99999", ":-1", "host:https"}
+	for _, a := range bad {
+		if err := ValidateListenAddr(a); err == nil {
+			t.Errorf("ValidateListenAddr(%q) = nil, want error", a)
+		}
+	}
+}
+
+func TestLoadRejectsBadListen(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "c.toml")
+	writeFile(t, path, "listen = \"8443\"\n")
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected error for listen without colon")
+	}
+}

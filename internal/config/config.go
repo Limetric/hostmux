@@ -8,7 +8,9 @@ package config
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -150,6 +152,14 @@ func (c *Config) validate() error {
 	default:
 		return fmt.Errorf("config: log_format must be %q or %q, got %q", LogFormatText, LogFormatJSON, c.LogFormat)
 	}
+	if err := ValidateListenAddr(c.Listen); err != nil {
+		return fmt.Errorf("config: listen: %w", err)
+	}
+	if c.TLS != nil && c.TLS.Listen != "" {
+		if err := ValidateListenAddr(c.TLS.Listen); err != nil {
+			return fmt.Errorf("config: tls.listen: %w", err)
+		}
+	}
 	if c.Proxy != nil {
 		p := c.Proxy
 		for name, d := range map[string]Duration{
@@ -181,6 +191,29 @@ func (c *Config) validate() error {
 		if err := validateUpstreamURL(app.Upstream); err != nil {
 			return fmt.Errorf("config: app[%d]: %w", i, err)
 		}
+	}
+	return nil
+}
+
+// ValidateListenAddr checks that addr is a valid "host:port" TCP listen
+// address such as ":8443", ":443", "127.0.0.1:8443", or "[::1]:443". The
+// host part may be empty (bind all interfaces). The port must be a number in
+// 0–65535 (0 means OS-assigned). Exposed so `hostmux config check` and
+// `hostmux doctor` can reuse the same rule the daemon enforces at load.
+func ValidateListenAddr(addr string) error {
+	if addr == "" {
+		return fmt.Errorf("must not be empty")
+	}
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("must be host:port (e.g. \":8443\"): %w", err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return fmt.Errorf("port %q must be numeric", portStr)
+	}
+	if port < 0 || port > 65535 {
+		return fmt.Errorf("port %d out of range 0-65535", port)
 	}
 	return nil
 }
