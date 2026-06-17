@@ -258,14 +258,18 @@ func TestWriteAndRemoveDiscoveryFile(t *testing.T) {
 }
 
 func TestPIDFilePathFor(t *testing.T) {
+	// Build inputs/expectations with filepath.Join so the test asserts the
+	// same separator the implementation produces on every OS (Windows uses
+	// backslashes).
+	dir := filepath.Join("base", "hm")
 	cases := []struct {
 		name string
 		sock string
 		want string
 	}{
-		{"dotSockSuffixReplaced", "/tmp/hm/hostmux.sock", "/tmp/hm/hostmux.pid"},
-		{"noSockSuffixAppended", "/tmp/hm/custom", "/tmp/hm/custom.pid"},
-		{"sockInMiddleNotTouched", "/tmp/hm/my.sock.thing", "/tmp/hm/my.sock.thing.pid"},
+		{"dotSockSuffixReplaced", filepath.Join(dir, "hostmux.sock"), filepath.Join(dir, "hostmux.pid")},
+		{"noSockSuffixAppended", filepath.Join(dir, "custom"), filepath.Join(dir, "custom.pid")},
+		{"sockInMiddleNotTouched", filepath.Join(dir, "my.sock.thing"), filepath.Join(dir, "my.sock.thing.pid")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

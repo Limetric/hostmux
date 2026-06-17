@@ -40,6 +40,34 @@ jobs:
       - name: Verify Windows cross-compilation
         run: GOOS=windows GOARCH=amd64 go build ./...
 
+  windows-checks:
+    runs-on: windows-latest
+    # Use bash on Windows so the gofmt snippet below works unchanged
+    # (Git Bash ships on GitHub's windows-latest runners).
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Check Go formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "Unformatted Go files:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: Run Go checks
+        run: |
+          go vet ./...
+          go tool staticcheck ./...
+          go test ./... -count=1
+    # Integration tests stay Unix-only (see AGENTS.md); the default unit
+    # suite above runs natively on Windows.
+
   build:
     if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
     runs-on: ubuntu-latest
