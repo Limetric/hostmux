@@ -37,9 +37,12 @@ sudo mv hostmux-linux-amd64 /usr/local/bin/hostmux
 Release assets are named consistently as `hostmux-<os>-<arch>` (with `.exe` on
 Windows): `linux`/`darwin`/`windows` × `amd64`/`arm64`.
 
-**Homebrew.** No tap is published yet; use the install script above on macOS in
-the meantime. (A `brew` tap that wraps these release artifacts is a planned
-follow-up.)
+**Homebrew.** On macOS and Linux, install with Homebrew from the Limetric tap:
+
+```bash
+brew install Limetric/tap/hostmux
+hostmux version
+```
 
 **Build from source:**
 
