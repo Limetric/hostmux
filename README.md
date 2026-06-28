@@ -11,40 +11,28 @@
 
 ## Install
 
-**One-line install** (Linux/macOS) — detects your OS/arch, downloads the latest
-release, and verifies its SHA-256 checksum:
+### Brew
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/Limetric/hostmux/main/install.sh | sh
-```
-
-Override the destination with `HOSTMUX_INSTALL_DIR` (default `/usr/local/bin`):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Limetric/hostmux/main/install.sh | HOSTMUX_INSTALL_DIR="$HOME/.local/bin" sh
-```
-
-**Manual download.** Grab a binary from
-[GitHub Releases](https://github.com/Limetric/hostmux/releases/latest). Each
-asset ships a `<name>.sha256` checksum file; verify before running:
-
-```bash
-sha256sum -c hostmux-linux-amd64.sha256   # or: shasum -a 256 -c ... on macOS
-chmod +x hostmux-linux-amd64
-sudo mv hostmux-linux-amd64 /usr/local/bin/hostmux
-```
-
-Release assets are named consistently as `hostmux-<os>-<arch>` (with `.exe` on
-Windows): `linux`/`darwin`/`windows` × `amd64`/`arm64`.
-
-**Homebrew.** On macOS and Linux, install with Homebrew from the Limetric tap:
+On macOS and Linux, install with Homebrew from the Limetric tap:
 
 ```bash
 brew install Limetric/tap/hostmux
 hostmux version
 ```
 
-**Build from source:**
+### Download Binary
+
+Download the latest binary from [GitHub Releases](https://github.com/Limetric/hostmux/releases/latest).
+
+Release assets are named consistently as `hostmux-<os>-<arch>` (with `.exe` on
+Windows): `linux`/`darwin`/`windows` × `amd64`/`arm64`.
+
+```bash
+chmod +x hostmux-linux-amd64
+sudo mv hostmux-linux-amd64 /usr/local/bin/hostmux
+```
+
+### Build from source
 
 ```bash
 git clone https://github.com/Limetric/hostmux.git
@@ -53,15 +41,6 @@ go build -o build/hostmux .
 ```
 
 The examples below assume `hostmux` is on your `PATH`.
-
-### Upgrade
-
-Re-run the install script — it always fetches the latest release and overwrites
-the existing binary:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Limetric/hostmux/main/install.sh | sh
-```
 
 ### Uninstall
 

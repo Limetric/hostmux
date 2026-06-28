@@ -113,10 +113,9 @@ jobs:
 
             out="dist/hostmux-${goos}-${goarch}${ext}"
             GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="-s -w -X main.Version=${GITHUB_REF_NAME}" -o "$out" .
-            sha256sum "$out" > "$out.sha256"
           done
 
-      - name: Upload release binaries and checksums
+      - name: Upload release binaries
         uses: softprops/action-gh-release@v3
         with:
           files: dist/hostmux-*
