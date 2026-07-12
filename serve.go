@@ -231,6 +231,32 @@ func runForegroundDaemon(opts startOptions) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	hidePort := cfg != nil && cfg.HidePort
+
+	// Optional HTTP->HTTPS redirect listener. Bound before httpErrCh so the
+	// channel is sized for its goroutines too.
+	var redirectSrv *http.Server
+	var redirectLns []net.Listener
+	if cfg != nil && cfg.HTTPRedirect != "" {
+		var rerr error
+		redirectLns, rerr = bindPublicListeners(cfg.HTTPRedirect)
+		if rerr != nil {
+			for _, ln := range tlsLns {
+				ln.Close()
+			}
+			return fmt.Errorf("hostmux start: http_redirect listener: bind %s: %w", cfg.HTTPRedirect, rerr)
+		}
+		redirectSrv = &http.Server{Handler: newHTTPSRedirectHandler(publicPort, hidePort)}
+		// Apply the same server-side limits (timeouts, max header bytes) as the
+		// main listener so the redirect endpoint is equally hardened.
+		o := serverOptions(proxyBlock)
+		redirectSrv.ReadHeaderTimeout = o.ReadHeaderTimeout
+		redirectSrv.IdleTimeout = o.IdleTimeout
+		if o.MaxHeaderBytes > 0 {
+			redirectSrv.MaxHeaderBytes = o.MaxHeaderBytes
+		}
+	}
+
 	// Start HTTP servers. The TLS TCP listener was already bound above so
 	// PublicPort is known before we accept any clients; hand it directly
 	// to the TLS server here. The Plain path is unreachable today
@@ -238,7 +264,7 @@ func runForegroundDaemon(opts startOptions) error {
 	// up so enabling one later is a config-only change. Errors are
 	// surfaced via httpErrCh so the foreground caller sees startup
 	// failures instead of treating them as a clean shutdown.
-	httpErrCh := make(chan error, len(tlsLns)+1)
+	httpErrCh := make(chan error, len(tlsLns)+len(redirectLns)+1)
 	if servers.TLS != nil {
 		tlsSrv := servers.TLS
 		for _, ln := range tlsLns {
@@ -264,6 +290,20 @@ func runForegroundDaemon(opts startOptions) error {
 			}
 		}()
 	}
+	if redirectSrv != nil {
+		for _, ln := range redirectLns {
+			ln := ln
+			go func() {
+				serr := redirectSrv.Serve(ln)
+				if serr != nil && serr != http.ErrServerClosed {
+					log.Printf("http redirect server: %v", serr)
+					httpErrCh <- serr
+					cancel()
+				}
+			}()
+		}
+		log.Printf("hostmux start: HTTP->HTTPS redirect listening on %s", redirectLns[0].Addr().String())
+	}
 	if len(tlsLns) > 1 {
 		addrs := make([]string, len(tlsLns))
 		for i, ln := range tlsLns {
@@ -278,7 +318,6 @@ func runForegroundDaemon(opts startOptions) error {
 	}
 
 	// Unix socket server.
-	hidePort := cfg != nil && cfg.HidePort
 	if hidePort {
 		log.Printf("hostmux start: hide_port set; public URLs will omit the listener port")
 	}
@@ -302,10 +341,16 @@ func runForegroundDaemon(opts startOptions) error {
 		for _, srv := range servers.All() {
 			_ = srv.Shutdown(shutdownCtx)
 		}
+		if redirectSrv != nil {
+			_ = redirectSrv.Shutdown(shutdownCtx)
+		}
 		// Explicitly close every bound listener too: a ServeTLS goroutine may
 		// not have registered its listener with the server yet, so Shutdown
 		// alone could leave one open.
 		for _, ln := range tlsLns {
+			_ = ln.Close()
+		}
+		for _, ln := range redirectLns {
 			_ = ln.Close()
 		}
 		return fmt.Errorf("hostmux start: sockserver: %w", err)
@@ -357,10 +402,16 @@ func runForegroundDaemon(opts startOptions) error {
 	for _, srv := range servers.All() {
 		_ = srv.Shutdown(shutdownCtx)
 	}
+	if redirectSrv != nil {
+		_ = redirectSrv.Shutdown(shutdownCtx)
+	}
 	// Also close the raw listeners directly. http.Server.Shutdown only closes
 	// listeners the server registered; if ServeTLS failed during setup (e.g. a
 	// cert-load error) before registering one, Shutdown would leave it bound.
 	for _, ln := range tlsLns {
+		_ = ln.Close()
+	}
+	for _, ln := range redirectLns {
 		_ = ln.Close()
 	}
 	_ = sockSrv.Close()

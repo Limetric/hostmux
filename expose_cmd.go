@@ -38,6 +38,8 @@ The first --name is the route's identifier for "hostmux unexpose".`,
 	cmd.Flags().StringVar(&opts.Domain, "domain", "", "expand bare subdomains using this base domain")
 	cmd.Flags().StringArrayVar(&opts.Labels, "label", nil, "repeatable key=value metadata attached to the route")
 	cmd.Flags().StringVar(&opts.SocketPath, "socket", "", "override Unix socket path")
+	cmd.Flags().BoolVar(&opts.Persist, "persist", false, "also append the route to the config file so it survives a daemon restart")
+	cmd.Flags().StringVar(&opts.ConfigPath, "config", "", "config file to persist to (with --persist; default: standard config path)")
 	return cmd
 }
 

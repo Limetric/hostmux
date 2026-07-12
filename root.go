@@ -90,6 +90,7 @@ func newRootCmd() *cobra.Command {
 		newUntrustCmd(),
 		newCompletionCmd(),
 		newStopCmd(),
+		newLogsCmd(),
 		newVersionCmd(),
 	)
 

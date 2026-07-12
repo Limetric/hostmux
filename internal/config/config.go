@@ -35,15 +35,20 @@ const (
 
 // Config is the parsed TOML config file.
 type Config struct {
-	Listen    string      `toml:"listen"`
-	Socket    string      `toml:"socket"`
-	Domain    string      `toml:"domain"`
-	HidePort  bool        `toml:"hide_port"`
-	AccessLog bool        `toml:"access_log"`
-	LogFormat string      `toml:"log_format"`
-	TLS       *TLSBlock   `toml:"tls"`
-	Proxy     *ProxyBlock `toml:"proxy"`
-	Apps      []App       `toml:"app"`
+	Listen string `toml:"listen"`
+	Socket string `toml:"socket"`
+	Domain string `toml:"domain"`
+	// HTTPRedirect, when non-empty, is a plain-HTTP listen address (e.g.
+	// ":8080") on which the daemon serves 308 redirects to the HTTPS URL.
+	// Empty (default) disables the redirect listener. Applied at daemon start;
+	// changing it requires a restart (not hot-reloaded).
+	HTTPRedirect string      `toml:"http_redirect"`
+	HidePort     bool        `toml:"hide_port"`
+	AccessLog    bool        `toml:"access_log"`
+	LogFormat    string      `toml:"log_format"`
+	TLS          *TLSBlock   `toml:"tls"`
+	Proxy        *ProxyBlock `toml:"proxy"`
+	Apps         []App       `toml:"app"`
 }
 
 // Log format values accepted in `log_format`.
@@ -168,6 +173,11 @@ func (c *Config) validate() error {
 	if c.TLS != nil && c.TLS.Listen != "" {
 		if err := ValidateListenAddr(c.TLS.Listen); err != nil {
 			return fmt.Errorf("config: tls.listen: %w", err)
+		}
+	}
+	if c.HTTPRedirect != "" {
+		if err := ValidateListenAddr(c.HTTPRedirect); err != nil {
+			return fmt.Errorf("config: http_redirect: %w", err)
 		}
 	}
 	if c.Proxy != nil {
@@ -313,6 +323,11 @@ func Check(path string) (*Config, []Diagnostic) {
 	if cfg.TLS != nil && cfg.TLS.Listen != "" {
 		if err := ValidateListenAddr(cfg.TLS.Listen); err != nil {
 			add(SeverityError, "tls.listen: %v", err)
+		}
+	}
+	if cfg.HTTPRedirect != "" {
+		if err := ValidateListenAddr(cfg.HTTPRedirect); err != nil {
+			add(SeverityError, "http_redirect: %v", err)
 		}
 	}
 

@@ -598,3 +598,25 @@ upstream = "http://127.0.0.1:8080"
 		t.Fatal("watcher did not observe a write to the symlink target")
 	}
 }
+
+func TestLoadRejectsBadHTTPRedirect(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hostmux.toml")
+	writeFile(t, path, "http_redirect = \"not-a-listen-addr\"\n")
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected Load to reject a malformed http_redirect")
+	}
+}
+
+func TestLoadAcceptsHTTPRedirect(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hostmux.toml")
+	writeFile(t, path, "http_redirect = \":8080\"\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.HTTPRedirect != ":8080" {
+		t.Fatalf("HTTPRedirect = %q", cfg.HTTPRedirect)
+	}
+}
