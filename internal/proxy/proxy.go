@@ -103,32 +103,33 @@ func NewWithOptions(r *router.Router, opts Options) http.Handler {
 		}
 		originalHost := req.Host
 		var proxyErr string
-		// Build a fresh ReverseProxy per request so the Director closure is
+		// Build a fresh ReverseProxy per request so the Rewrite closure is
 		// race-free. Only the fields we actually need are set, so future
 		// additions to httputil.ReverseProxy cannot silently break us.
+		//
+		// We use the Rewrite API (not the legacy Director) specifically for
+		// its X-Forwarded-* handling: Rewrite runs AFTER the stdlib strips
+		// hop-by-hop headers and pre-deletes any inbound X-Forwarded-* pair,
+		// so a client cannot (a) spoof those headers nor (b) smuggle a
+		// "Connection: X-Forwarded-Host" header to strip the values we set.
 		rp := &httputil.ReverseProxy{
 			Transport: opts.Transport,
 			ErrorHandler: func(w http.ResponseWriter, req *http.Request, err error) {
 				proxyErr = err.Error()
 				errorHandler(w, req, err)
 			},
-			Director: func(out *http.Request) {
-				out.URL.Scheme = target.Scheme
-				out.URL.Host = target.Host
-				// Setting out.Host to a non-empty string prevents net/http
-				// from falling back to out.URL.Host for the wire Host header,
+			Rewrite: func(pr *httputil.ProxyRequest) {
+				pr.Out.URL.Scheme = target.Scheme
+				pr.Out.URL.Host = target.Host
+				// Setting Out.Host to a non-empty string prevents net/http
+				// from falling back to Out.URL.Host for the wire Host header,
 				// preserving the original end-to-end.
-				out.Host = originalHost
-				if out.Header.Get("X-Forwarded-Host") == "" {
-					out.Header.Set("X-Forwarded-Host", originalHost)
-				}
-				if out.Header.Get("X-Forwarded-Proto") == "" {
-					if req.TLS != nil {
-						out.Header.Set("X-Forwarded-Proto", "https")
-					} else {
-						out.Header.Set("X-Forwarded-Proto", "http")
-					}
-				}
+				pr.Out.Host = originalHost
+				// Assert X-Forwarded-For/Host/Proto from the observed inbound
+				// connection. Inbound X-Forwarded-* were already deleted by
+				// the stdlib before Rewrite, so these reflect only the real
+				// client, never a client-supplied value.
+				pr.SetXForwarded()
 			},
 		}
 		rp.ServeHTTP(w, req)

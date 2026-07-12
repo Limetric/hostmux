@@ -80,6 +80,37 @@ func TestSetsForwardedHeaders(t *testing.T) {
 	}
 }
 
+func TestOverwritesSpoofedForwardedHeaders(t *testing.T) {
+	var seen http.Header
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = r.Header.Clone()
+	}))
+	defer upstream.Close()
+
+	h := newProxyWith(t, "myapp.local", upstream.URL)
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "myapp.local"
+	req.RemoteAddr = "203.0.113.1:1234"
+	// Client attempts to spoof every X-Forwarded-* header, and also tries to
+	// strip the proxy's values via a crafted hop-by-hop Connection header.
+	req.Header.Set("X-Forwarded-Host", "evil.example")
+	req.Header.Set("X-Forwarded-Proto", "https") // request arrives over plain HTTP (req.TLS == nil)
+	req.Header.Set("X-Forwarded-For", "1.2.3.4")
+	req.Header.Set("Connection", "X-Forwarded-Host, X-Forwarded-Proto, X-Forwarded-For")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	if got := seen.Get("X-Forwarded-Host"); got != "myapp.local" {
+		t.Fatalf("X-Forwarded-Host = %q, want the real host (spoof not overwritten)", got)
+	}
+	if got := seen.Get("X-Forwarded-Proto"); got != "http" {
+		t.Fatalf("X-Forwarded-Proto = %q, want http (spoof not overwritten)", got)
+	}
+	// The spoofed prefix must be gone; only the real client IP survives.
+	if got := seen.Get("X-Forwarded-For"); got != "203.0.113.1" {
+		t.Fatalf("X-Forwarded-For = %q, want only the real client IP", got)
+	}
+}
+
 func TestUnknownHostReturns404(t *testing.T) {
 	r := router.New()
 	h := New(r)
