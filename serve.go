@@ -122,7 +122,13 @@ func runForegroundDaemon(opts startOptions) error {
 		return fmt.Errorf("hostmux start: sockpath: %w", err)
 	}
 	if dir := filepath.Dir(sockPath); dir != "" {
-		_ = os.MkdirAll(dir, 0o755)
+		// 0o700 so a directory hostmux creates for the control socket (e.g.
+		// ~/.hostmux) is owner-only. We deliberately do NOT Chmod a
+		// pre-existing directory: the socket path can be overridden to an
+		// arbitrary location (e.g. /tmp), and tightening a shared directory
+		// would be destructive. Owner-only access is enforced regardless by
+		// the socket's 0600 mode and the per-connection peer-UID check.
+		_ = os.MkdirAll(dir, 0o700)
 	}
 
 	// Acquire the PID-file flock for this socket path. The PID file lives
