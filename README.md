@@ -307,6 +307,11 @@ domain = "example.com"
 
 [tls]
 listen = ":8443"
+# A listen address without a host (":8443") binds loopback only — both
+# 127.0.0.1 and ::1 — so your dev servers are not reachable from the LAN.
+# cloudflared connects over loopback, so the tunnel workflow is unaffected.
+# To serve the local network directly (e.g. a phone on the same Wi-Fi
+# without a tunnel), set an explicit host: listen = "0.0.0.0:8443".
 # Optional: override the managed self-signed certificate paths.
 # cert = "~/certs/hostmux.crt"
 # key = "~/certs/hostmux.key"
@@ -324,12 +329,14 @@ Run with `hostmux start --config /path/to/hostmux.toml`. The file is hot-reloade
 
 ## Proxy hardening
 
-By default hostmux uses Go's standard server and transport settings, which
-suit local development. When hostmux fronts apps over a tunnel you can opt
-into stricter limits with a `[proxy]` block. Every field is optional and
-defaults to Go's behavior, so existing configs are unaffected. Note: the
-`[proxy]` block is applied at daemon start, so changes require a restart
-(it is not hot-reloaded like routes).
+hostmux applies conservative server-side defaults out of the box — a
+`read_header_timeout` of `10s` and an `idle_timeout` of `120s` (anti-Slowloris)
+— and otherwise uses Go's standard transport settings, which suit local
+development. When hostmux fronts apps over a tunnel you can tighten or relax
+these limits with a `[proxy]` block. Every field is optional; a value here
+overrides the corresponding default. Note: the `[proxy]` block is applied at
+daemon start, so changes require a restart (it is not hot-reloaded like
+routes).
 
 ```toml
 [proxy]

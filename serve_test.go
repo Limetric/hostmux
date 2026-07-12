@@ -271,3 +271,65 @@ func TestAdvertisedPort(t *testing.T) {
 		}
 	}
 }
+
+func TestBindPublicListeners_LoopbackOnlyByDefault(t *testing.T) {
+	lns, err := bindPublicListeners(":0")
+	if err != nil {
+		t.Fatalf("bindPublicListeners: %v", err)
+	}
+	defer func() {
+		for _, ln := range lns {
+			ln.Close()
+		}
+	}()
+	if len(lns) == 0 {
+		t.Fatal("expected at least one listener")
+	}
+	// Every listener must be bound to a loopback address, never 0.0.0.0/::.
+	var port string
+	for i, ln := range lns {
+		host, p, err := net.SplitHostPort(ln.Addr().String())
+		if err != nil {
+			t.Fatalf("addr %q: %v", ln.Addr(), err)
+		}
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			t.Fatalf("listener %d bound to non-loopback %q", i, host)
+		}
+		if i == 0 {
+			port = p
+		} else if p != port {
+			t.Fatalf("listener %d port %q != primary port %q", i, p, port)
+		}
+	}
+}
+
+func TestBindPublicListeners_ExplicitHostHonored(t *testing.T) {
+	lns, err := bindPublicListeners("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("bindPublicListeners: %v", err)
+	}
+	defer func() {
+		for _, ln := range lns {
+			ln.Close()
+		}
+	}()
+	if len(lns) != 1 {
+		t.Fatalf("explicit host should yield exactly one listener, got %d", len(lns))
+	}
+	host, _, _ := net.SplitHostPort(lns[0].Addr().String())
+	if host != "127.0.0.1" {
+		t.Fatalf("listener bound to %q, want 127.0.0.1", host)
+	}
+}
+
+func TestServerOptionsAppliesDefaultTimeouts(t *testing.T) {
+	// Nil block: safe defaults, not Go's unlimited zero values.
+	opts := serverOptions(nil)
+	if opts.ReadHeaderTimeout != defaultReadHeaderTimeout {
+		t.Fatalf("ReadHeaderTimeout = %v, want default %v", opts.ReadHeaderTimeout, defaultReadHeaderTimeout)
+	}
+	if opts.IdleTimeout != defaultIdleTimeout {
+		t.Fatalf("IdleTimeout = %v, want default %v", opts.IdleTimeout, defaultIdleTimeout)
+	}
+}

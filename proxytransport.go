@@ -33,15 +33,34 @@ func buildUpstreamTransport(p *config.ProxyBlock) http.RoundTripper {
 	return base
 }
 
-// serverOptions maps the [proxy] config block to listener.ServerOptions. A
-// nil block yields the zero value, preserving Go's net/http defaults.
+// Default server-side timeouts applied even when no [proxy] block is
+// configured. Go's net/http defaults leave ReadHeaderTimeout and IdleTimeout
+// unset (effectively unlimited), which allows a Slowloris-style DoS on a
+// listener that may be reachable over a tunnel. These conservative defaults
+// close that hole while staying generous for local development; a [proxy]
+// block can override either.
+const (
+	defaultReadHeaderTimeout = 10 * time.Second
+	defaultIdleTimeout       = 120 * time.Second
+)
+
+// serverOptions maps the [proxy] config block to listener.ServerOptions,
+// falling back to hostmux's safe default timeouts for any field the block
+// does not set. A nil block yields the defaults.
 func serverOptions(p *config.ProxyBlock) listener.ServerOptions {
+	opts := listener.ServerOptions{
+		ReadHeaderTimeout: defaultReadHeaderTimeout,
+		IdleTimeout:       defaultIdleTimeout,
+	}
 	if p == nil {
-		return listener.ServerOptions{}
+		return opts
 	}
-	return listener.ServerOptions{
-		ReadHeaderTimeout: p.ReadHeaderTimeout.AsDuration(),
-		IdleTimeout:       p.IdleTimeout.AsDuration(),
-		MaxHeaderBytes:    p.MaxHeaderBytes,
+	if v := p.ReadHeaderTimeout.AsDuration(); v > 0 {
+		opts.ReadHeaderTimeout = v
 	}
+	if v := p.IdleTimeout.AsDuration(); v > 0 {
+		opts.IdleTimeout = v
+	}
+	opts.MaxHeaderBytes = p.MaxHeaderBytes
+	return opts
 }

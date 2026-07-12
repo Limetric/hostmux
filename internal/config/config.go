@@ -23,6 +23,9 @@ import (
 )
 
 const (
+	// DefaultTLSListen has no host, which hostmux binds to loopback only
+	// (both 127.0.0.1 and ::1) so dev servers are not exposed to the LAN.
+	// Set an explicit host (e.g. "0.0.0.0:8443") to serve the network.
 	DefaultTLSListen = ":8443"
 	// DefaultDomain is the base domain used to expand bare host labels in config
 	// when the domain field is omitted (e.g. "api" → "api.localhost").
@@ -60,9 +63,11 @@ type TLSBlock struct {
 }
 
 // ProxyBlock holds optional hardening knobs for the proxy edge. All fields
-// default to zero, which preserves hostmux's prior behavior (Go's defaults):
-// no server-side timeouts, the standard upstream transport, and TLS
-// verification enabled for HTTPS upstreams.
+// are optional. When a field is unset, hostmux applies its own conservative
+// defaults for the server-side timeouts (ReadHeaderTimeout and IdleTimeout;
+// see the default* constants in proxytransport.go) and otherwise uses the
+// standard upstream transport with TLS verification enabled for HTTPS
+// upstreams. A non-zero value here overrides the corresponding default.
 type ProxyBlock struct {
 	// ReadHeaderTimeout bounds how long the server waits for request
 	// headers. Mitigates slow-header (Slowloris) clients. Server-side.
