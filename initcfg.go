@@ -68,6 +68,11 @@ func runInit(opts initOptions) error {
 	if domain == "" {
 		domain = config.DefaultDomain
 	}
+	// Reject a malformed domain before it reaches the config file or the
+	// cloudflared ingress snippet (where a quote/newline could inject YAML).
+	if !hostnames.ValidHostToken(domain) {
+		return exitError{code: 2, text: fmt.Sprintf("hostmux init: invalid domain %q", domain)}
+	}
 	listen := opts.Listen
 	if listen == "" {
 		listen = config.DefaultTLSListen

@@ -79,10 +79,20 @@ func WriteDiscovery(path string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, "socket"), []byte(path+"\n"), 0o644)
+	// 0o600: the discovery file only advertises the control socket path to
+	// the owner's own client invocations; no other user needs to read it.
+	// Remove any existing file first (rather than os.Chmod, which follows
+	// symlinks) so a stale file left 0o644 by an older hostmux — or a planted
+	// symlink — is replaced by a fresh 0o600 regular file. Removing a symlink
+	// unlinks the link itself, never its target.
+	file := filepath.Join(dir, "socket")
+	if err := os.Remove(file); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return os.WriteFile(file, []byte(path+"\n"), 0o600)
 }
 
 // RemoveDiscovery deletes the discovery file. Safe to call when missing.

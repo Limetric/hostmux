@@ -4,6 +4,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -303,5 +304,40 @@ func TestIsExplicit(t *testing.T) {
 	t.Setenv("HOSTMUX_SOCKET", "/y")
 	if !IsExplicit(Options{}) {
 		t.Fatal("env should be explicit")
+	}
+}
+
+func TestWriteDiscoveryTightensPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix perms not applicable")
+	}
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+
+	// Pre-create ~/.hostmux and a stale discovery file with loose perms to
+	// prove WriteDiscovery tightens an existing dir/file, not just new ones.
+	dir := filepath.Join(tmp, ".hostmux")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "socket"), []byte("stale\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := WriteDiscovery("/tmp/x.sock"); err != nil {
+		t.Fatalf("WriteDiscovery: %v", err)
+	}
+	// The discovery file must be owner-only even though a stale 0644 file
+	// existed (WriteDiscovery replaces it with a fresh 0600 regular file).
+	ffi, err := os.Lstat(filepath.Join(dir, "socket"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ffi.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("discovery file must be a regular file, not a symlink")
+	}
+	if perm := ffi.Mode().Perm(); perm&0o077 != 0 {
+		t.Fatalf("discovery file mode = %o, want owner-only", perm)
 	}
 }

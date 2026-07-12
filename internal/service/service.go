@@ -6,6 +6,8 @@
 package service
 
 import (
+	"bytes"
+	"encoding/xml"
 	"fmt"
 	"strings"
 )
@@ -43,18 +45,18 @@ func LaunchdPlist(p Params) string {
 	b.WriteString(`<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">` + "\n")
 	b.WriteString(`<plist version="1.0">` + "\n")
 	b.WriteString("<dict>\n")
-	fmt.Fprintf(&b, "  <key>Label</key>\n  <string>%s</string>\n", DarwinLabel)
+	fmt.Fprintf(&b, "  <key>Label</key>\n  <string>%s</string>\n", xmlString(DarwinLabel))
 	b.WriteString("  <key>ProgramArguments</key>\n  <array>\n")
-	fmt.Fprintf(&b, "    <string>%s</string>\n", p.BinPath)
+	fmt.Fprintf(&b, "    <string>%s</string>\n", xmlString(p.BinPath))
 	for _, a := range startArgs(p) {
-		fmt.Fprintf(&b, "    <string>%s</string>\n", a)
+		fmt.Fprintf(&b, "    <string>%s</string>\n", xmlString(a))
 	}
 	b.WriteString("  </array>\n")
 	b.WriteString("  <key>RunAtLoad</key>\n  <true/>\n")
 	b.WriteString("  <key>KeepAlive</key>\n  <true/>\n")
 	if p.LogPath != "" {
-		fmt.Fprintf(&b, "  <key>StandardOutPath</key>\n  <string>%s</string>\n", p.LogPath)
-		fmt.Fprintf(&b, "  <key>StandardErrorPath</key>\n  <string>%s</string>\n", p.LogPath)
+		fmt.Fprintf(&b, "  <key>StandardOutPath</key>\n  <string>%s</string>\n", xmlString(p.LogPath))
+		fmt.Fprintf(&b, "  <key>StandardErrorPath</key>\n  <string>%s</string>\n", xmlString(p.LogPath))
 	}
 	b.WriteString("</dict>\n</plist>\n")
 	return b.String()
@@ -62,7 +64,12 @@ func LaunchdPlist(p Params) string {
 
 // SystemdUnit renders a systemd user service unit.
 func SystemdUnit(p Params) string {
-	execStart := p.BinPath + " " + strings.Join(startArgs(p), " ")
+	tokens := append([]string{p.BinPath}, startArgs(p)...)
+	quoted := make([]string, len(tokens))
+	for i, t := range tokens {
+		quoted[i] = systemdQuote(t)
+	}
+	execStart := strings.Join(quoted, " ")
 	var b strings.Builder
 	b.WriteString("[Unit]\n")
 	b.WriteString("Description=hostmux host-routed reverse proxy\n")
@@ -75,4 +82,40 @@ func SystemdUnit(p Params) string {
 	b.WriteString("[Install]\n")
 	b.WriteString("WantedBy=default.target\n")
 	return b.String()
+}
+
+// xmlString escapes a value for inclusion in plist <string> element content,
+// so a path containing &, <, >, or quotes cannot corrupt or inject into the
+// generated plist.
+func xmlString(s string) string {
+	var buf bytes.Buffer
+	// EscapeText only errors on write failures, which bytes.Buffer never
+	// returns; ignore it.
+	_ = xml.EscapeText(&buf, []byte(s))
+	return buf.String()
+}
+
+// systemdQuote renders one ExecStart token for a systemd command line.
+// Systemd word-splits ExecStart on whitespace and treats % as a specifier
+// introducer, so a token with a space, %, quote, backslash, or control
+// character would otherwise split the command, be misinterpreted, or (via a
+// newline) inject additional unit directives. Such tokens are wrapped in a
+// double-quoted, C-escaped string; ordinary tokens (the common case) are
+// emitted verbatim so the generated unit stays readable.
+func systemdQuote(s string) string {
+	// % introduces a specifier and $ introduces variable expansion (both even
+	// inside double quotes); ; and whitespace affect word/command parsing.
+	if s != "" && !strings.ContainsAny(s, " \t\r\n\"'\\%$;") {
+		return s
+	}
+	r := strings.NewReplacer(
+		`\`, `\\`,
+		`"`, `\"`,
+		"\n", `\n`,
+		"\r", `\r`,
+		"\t", `\t`,
+		"%", "%%",
+		"$", "$$",
+	)
+	return `"` + r.Replace(s) + `"`
 }
