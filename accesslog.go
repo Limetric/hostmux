@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/Limetric/hostmux/internal/config"
 	"github.com/Limetric/hostmux/internal/proxy"
@@ -73,18 +75,59 @@ func (l *accessLogger) LogAccess(r proxy.AccessRecord) {
 		return
 	}
 	// Text format: "access METHOD host path -> status (Nms) upstream src=...".
-	src := r.Source
+	// Every free-text field is sanitized: Method/Host/Path come straight from
+	// the client, and Upstream is supplied by socket clients (OpRegister /
+	// OpExpose), so any of them can carry line-breaking characters.
+	src := sanitizeLogField(r.Source)
 	if src == "" {
 		src = "-"
 	}
-	up := r.Upstream
+	up := sanitizeLogField(r.Upstream)
 	if up == "" {
 		up = "-"
 	}
 	errSuffix := ""
 	if r.Err != "" {
-		errSuffix = " error=" + r.Err
+		errSuffix = " error=" + sanitizeLogField(r.Err)
 	}
 	fmt.Fprintf(l.w, "access %s %s%s -> %d (%.1fms) %s src=%s%s\n",
-		r.Method, r.Host, r.Path, r.Status, durMs, up, src, errSuffix)
+		sanitizeLogField(r.Method), sanitizeLogField(r.Host), sanitizeLogField(r.Path),
+		r.Status, durMs, up, src, errSuffix)
+}
+
+// sanitizeLogField escapes any character that could forge or corrupt a line
+// in the text access log — ASCII C0 controls and DEL, C1 controls (including
+// NEL U+0085), the Unicode line/paragraph separators (U+2028/U+2029), and
+// format characters such as bidi overrides — as "\xNN" / "\uNNNN". Ordinary
+// printable text (including multibyte UTF-8) passes through unchanged. The
+// JSON format needs no equivalent because json.Marshal already escapes
+// control characters.
+func sanitizeLogField(s string) string {
+	if strings.IndexFunc(s, isLogControl) < 0 {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case !isLogControl(r):
+			b.WriteRune(r)
+		case r > 0xff:
+			fmt.Fprintf(&b, "\\u%04x", r)
+		default:
+			fmt.Fprintf(&b, "\\x%02x", r)
+		}
+	}
+	return b.String()
+}
+
+func isLogControl(r rune) bool {
+	// U+2028 line separator and U+2029 paragraph separator are line breaks to
+	// many viewers but are not in the Cc/Cf categories, so check them here.
+	if r == '\u2028' || r == '\u2029' {
+		return true
+	}
+	// unicode.IsControl covers C0 (incl. \n, \r, \t), DEL, and C1 (incl.
+	// NEL U+0085); unicode.Cf covers format characters like bidi overrides.
+	return unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
 }
