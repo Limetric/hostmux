@@ -35,6 +35,47 @@ func TestAccessLoggerText(t *testing.T) {
 	}
 }
 
+func TestAccessLoggerTextEscapesControlChars(t *testing.T) {
+	var buf bytes.Buffer
+	l := newAccessLogger(&buf, "text")
+	rec := sampleRecord()
+	// A percent-decoded path containing a newline must not forge a log line.
+	rec.Path = "/\naccess GET evil.example/ -> 200 (0.0ms) http://attacker src=socket:9"
+	l.LogAccess(rec)
+	out := buf.String()
+	if strings.Count(out, "\n") != 1 {
+		t.Fatalf("expected exactly one line, got %d:\n%q", strings.Count(out, "\n"), out)
+	}
+	if strings.Contains(out, "\naccess") {
+		t.Fatalf("newline was not escaped:\n%q", out)
+	}
+	if !strings.Contains(out, `\x0a`) {
+		t.Fatalf("expected escaped newline \\x0a in output:\n%q", out)
+	}
+}
+
+func TestAccessLoggerTextEscapesUnicodeSeparatorsAndUpstream(t *testing.T) {
+	var buf bytes.Buffer
+	l := newAccessLogger(&buf, "text")
+	rec := sampleRecord()
+	rec.Host = "a\u2028b.example" // U+2028 line separator
+	rec.Upstream = "http://x\ny"  // client-supplied upstream with a newline
+	l.LogAccess(rec)
+	out := buf.String()
+	if strings.Count(out, "\n") != 1 {
+		t.Fatalf("expected exactly one line, got %d:\n%q", strings.Count(out, "\n"), out)
+	}
+	if strings.ContainsRune(out, '\u2028') {
+		t.Fatalf("U+2028 not escaped:\n%q", out)
+	}
+	if !strings.Contains(out, `\u2028`) {
+		t.Fatalf("expected escaped \\u2028 in output:\n%q", out)
+	}
+	if !strings.Contains(out, `\x0a`) {
+		t.Fatalf("expected upstream newline escaped as \\x0a:\n%q", out)
+	}
+}
+
 func TestAccessLoggerJSON(t *testing.T) {
 	var buf bytes.Buffer
 	l := newAccessLogger(&buf, "json")

@@ -12,13 +12,29 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
+	"github.com/Limetric/hostmux/internal/hostnames"
 	"github.com/Limetric/hostmux/internal/router"
 	"github.com/Limetric/hostmux/internal/sockproto"
 )
+
+// handshakeTimeout bounds how long a freshly-accepted connection may take to
+// send its first message. It defends against a client that connects and never
+// speaks (slow-loris / goroutine+fd exhaustion). It is applied ONLY to the
+// first read: once a client has registered, its connection legitimately idles
+// for the lifetime of the registered process, so no further read deadline is
+// set.
+const handshakeTimeout = 15 * time.Second
+
+// writeTimeout bounds how long a single response write may block, so a peer
+// that stalls reading cannot pin a handler goroutine indefinitely.
+const writeTimeout = 15 * time.Second
 
 // Options configures a Server on construction.
 type Options struct {
@@ -76,6 +92,15 @@ func (s *Server) Listen(path string) error {
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		return fmt.Errorf("sockserver: listen %s: %w", path, err)
+	}
+	// Restrict the socket to the owner. net.Listen honors the umask, which can
+	// leave the socket group/other-accessible; on Linux this is what gates
+	// connect(2). Combined with the per-connection peer-UID check this keeps
+	// the control plane owner-only. Best-effort: a failure here is not fatal
+	// because the peer check still rejects other users.
+	if cerr := os.Chmod(path, 0o600); cerr != nil {
+		// Not fatal, but worth surfacing.
+		fmt.Fprintf(os.Stderr, "sockserver: chmod %s: %v\n", path, cerr)
 	}
 	s.mu.Lock()
 	s.ln = ln
@@ -152,6 +177,9 @@ func (s *Server) handleExpose(msg *sockproto.Message) error {
 	if !validManualName(msg.Source) {
 		return fmt.Errorf("invalid route name %q: use letters, digits, '-', '.', '_'", msg.Source)
 	}
+	if err := validateRoute(msg.Hosts, msg.Upstream); err != nil {
+		return err
+	}
 	return s.router.AddEntry(router.Entry{
 		Source:   ManualSource(msg.Source),
 		Hosts:    msg.Hosts,
@@ -181,20 +209,57 @@ func (s *Server) serveConn(c net.Conn) {
 		s.router.RemoveBySource(source)
 		c.Close()
 	}()
+
+	// Reject any connection whose peer is not the daemon's own user. On
+	// platforms where the peer UID cannot be determined (e.g. Windows) this
+	// is a no-op and access is gated by the socket's file permissions.
+	if !peerAllowed(c) {
+		return
+	}
+
 	dec := sockproto.NewDecoder(c)
 	enc := sockproto.NewEncoder(c)
+	// reply writes one response under a write deadline so a peer that stalls
+	// reading cannot pin this goroutine. It returns false when the write
+	// failed (timed out or the peer went away); the caller must then stop
+	// serving the connection — continuing would loop back into a
+	// deadline-less Decode and leave the goroutine pinned.
+	reply := func(m *sockproto.Message) bool {
+		_ = c.SetWriteDeadline(time.Now().Add(writeTimeout))
+		err := enc.Encode(m)
+		_ = c.SetWriteDeadline(time.Time{})
+		return err == nil
+	}
+	replyErr := func(e error) bool {
+		return reply(&sockproto.Message{Ok: false, Error: e.Error()})
+	}
+
+	// Bound only the FIRST read: a client that connects and never speaks is a
+	// slow-loris. Once a message arrives the connection may legitimately idle
+	// for the lifetime of a registered process, so the deadline is cleared.
+	_ = c.SetReadDeadline(time.Now().Add(handshakeTimeout))
+	first := true
 	for {
 		msg, err := dec.Decode()
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return
+			if !errors.Is(err, io.EOF) {
+				_ = reply(&sockproto.Message{Ok: false, Error: err.Error()})
 			}
-			_ = enc.Encode(&sockproto.Message{Ok: false, Error: err.Error()})
 			return
+		}
+		if first {
+			_ = c.SetReadDeadline(time.Time{})
+			first = false
 		}
 		switch msg.Op {
 		case sockproto.OpRegister:
-			if err := s.router.AddEntry(router.Entry{
+			if verr := validateRoute(msg.Hosts, msg.Upstream); verr != nil {
+				if !replyErr(verr) {
+					return
+				}
+				continue
+			}
+			if aerr := s.router.AddEntry(router.Entry{
 				Source:   source,
 				Hosts:    msg.Hosts,
 				Upstream: msg.Upstream,
@@ -202,23 +267,35 @@ func (s *Server) serveConn(c net.Conn) {
 				PID:      msg.PID,
 				Command:  msg.Command,
 				Cwd:      msg.Cwd,
-			}); err != nil {
-				_ = enc.Encode(&sockproto.Message{Ok: false, Error: err.Error()})
+			}); aerr != nil {
+				if !replyErr(aerr) {
+					return
+				}
 				continue
 			}
-			_ = enc.Encode(&sockproto.Message{Ok: true})
+			if !reply(&sockproto.Message{Ok: true}) {
+				return
+			}
 		case sockproto.OpExpose:
-			if err := s.handleExpose(msg); err != nil {
-				_ = enc.Encode(&sockproto.Message{Ok: false, Error: err.Error()})
+			if herr := s.handleExpose(msg); herr != nil {
+				if !replyErr(herr) {
+					return
+				}
 				continue
 			}
-			_ = enc.Encode(&sockproto.Message{Ok: true})
+			if !reply(&sockproto.Message{Ok: true}) {
+				return
+			}
 		case sockproto.OpUnexpose:
-			if err := s.handleUnexpose(msg); err != nil {
-				_ = enc.Encode(&sockproto.Message{Ok: false, Error: err.Error()})
+			if herr := s.handleUnexpose(msg); herr != nil {
+				if !replyErr(herr) {
+					return
+				}
 				continue
 			}
-			_ = enc.Encode(&sockproto.Message{Ok: true})
+			if !reply(&sockproto.Message{Ok: true}) {
+				return
+			}
 		case sockproto.OpList:
 			snap := s.router.Snapshot()
 			out := make([]sockproto.Entry, 0, len(snap))
@@ -237,24 +314,28 @@ func (s *Server) serveConn(c net.Conn) {
 				}
 				out = append(out, wire)
 			}
-			_ = enc.Encode(&sockproto.Message{Ok: true, Entries: out})
+			if !reply(&sockproto.Message{Ok: true, Entries: out}) {
+				return
+			}
 		case sockproto.OpInfo:
 			domain := ""
 			if s.domain != nil {
 				domain = s.domain()
 			}
 			publicHTTPS := !s.plainHTTP
-			_ = enc.Encode(&sockproto.Message{
+			if !reply(&sockproto.Message{
 				Ok:          true,
 				Domain:      domain,
 				PublicHTTPS: &publicHTTPS,
 				PublicPort:  s.publicPort,
-			})
+			}) {
+				return
+			}
 		case sockproto.OpBye:
-			_ = enc.Encode(&sockproto.Message{Ok: true})
+			_ = reply(&sockproto.Message{Ok: true})
 			return
 		case sockproto.OpShutdown:
-			_ = enc.Encode(&sockproto.Message{Ok: true})
+			_ = reply(&sockproto.Message{Ok: true})
 			// Fire the callback in its own goroutine so this handler
 			// returns before the daemon starts tearing down the listener.
 			// Otherwise the sockserver Close could block waiting for this
@@ -264,7 +345,45 @@ func (s *Server) serveConn(c net.Conn) {
 			}
 			return
 		default:
-			_ = enc.Encode(&sockproto.Message{Ok: false, Error: fmt.Sprintf("unknown op %q", msg.Op)})
+			if !reply(&sockproto.Message{Ok: false, Error: fmt.Sprintf("unknown op %q", msg.Op)}) {
+				return
+			}
 		}
 	}
+}
+
+// validateRoute rejects hosts and upstream URLs that the client-side CLI would
+// reject, so a raw socket client cannot register arbitrary hostnames or point
+// a route at a non-http(s) upstream. The daemon never trusts unvalidated wire
+// input, independent of who managed to connect.
+func validateRoute(hosts []string, upstream string) error {
+	if len(hosts) == 0 {
+		return fmt.Errorf("hosts must be non-empty")
+	}
+	for _, h := range hosts {
+		if !hostnames.ValidHostToken(h) {
+			return fmt.Errorf("invalid host %q", h)
+		}
+	}
+	return validateUpstream(upstream)
+}
+
+// validateUpstream requires an absolute http or https URL with a host, mirror-
+// ing the CLI's expose/run validation.
+func validateUpstream(raw string) error {
+	if raw == "" {
+		return fmt.Errorf("upstream must be non-empty")
+	}
+	if strings.TrimSpace(raw) != raw {
+		return fmt.Errorf("upstream must not contain surrounding whitespace")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("upstream must be a valid URL: %w", err)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if u.Host == "" || (scheme != "http" && scheme != "https") {
+		return fmt.Errorf("upstream must be an absolute http or https URL")
+	}
+	return nil
 }

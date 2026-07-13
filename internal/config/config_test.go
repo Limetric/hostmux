@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -428,5 +429,194 @@ func TestCheckParseError(t *testing.T) {
 	}
 	if errs, _ := diagSeverities(diags); errs == 0 {
 		t.Fatalf("expected parse error, got %+v", diags)
+	}
+}
+
+func TestLoadRejectsDuplicateHosts(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hostmux.toml")
+	writeFile(t, path, `
+domain = "example.com"
+[[app]]
+hosts = ["api"]
+upstream = "http://127.0.0.1:1"
+[[app]]
+hosts = ["API"]
+upstream = "http://127.0.0.1:2"
+`)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected Load to reject case-variant duplicate hosts")
+	}
+}
+
+func TestLoadRejectsPartialTLSPair(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hostmux.toml")
+	writeFile(t, path, `
+[tls]
+cert = "/tmp/x.crt"
+`)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected Load to reject a cert without a key")
+	}
+}
+
+func TestWatcherRecoversAfterFailedReload(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hostmux.toml")
+	good := `
+domain = "example.com"
+[[app]]
+hosts = ["api"]
+upstream = "http://127.0.0.1:8080"
+`
+	writeFile(t, path, good)
+
+	w, err := NewWatcher(path)
+	if err != nil {
+		t.Fatalf("NewWatcher: %v", err)
+	}
+
+	reloads := make(chan *Config, 4)
+	errs := make(chan error, 4)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go w.Run(ctx, func(c *Config) { reloads <- c }, func(e error) { errs <- e })
+
+	// First save: a broken config. Reload must fail (onError), not onReload.
+	writeAtomic(t, path, "this is : not [ valid toml")
+	select {
+	case <-errs:
+	case <-reloads:
+		t.Fatal("broken config unexpectedly reloaded")
+	case <-time.After(3 * time.Second):
+		t.Fatal("expected an onError for the broken config")
+	}
+
+	// Second save: a good config. Before the fix the watcher would be dead
+	// (watch never re-added after the failed reload) and this would never fire.
+	writeAtomic(t, path, good+"\n[[app]]\nhosts = [\"admin\"]\nupstream = \"http://127.0.0.1:9090\"\n")
+	select {
+	case c := <-reloads:
+		if len(c.Apps) != 2 {
+			t.Fatalf("reloaded config has %d apps, want 2", len(c.Apps))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("watcher did not recover: no reload after a prior failed reload")
+	}
+}
+
+// writeAtomic simulates an atomic-save editor (write temp, rename over) which
+// detaches the inotify/kqueue watch from the original inode.
+func writeAtomic(t *testing.T, path, body string) {
+	t.Helper()
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWatcherRecoversAfterFileDeletedAndRecreated(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hostmux.toml")
+	good := `
+domain = "example.com"
+[[app]]
+hosts = ["api"]
+upstream = "http://127.0.0.1:8080"
+`
+	writeFile(t, path, good)
+
+	w, err := NewWatcher(path)
+	if err != nil {
+		t.Fatalf("NewWatcher: %v", err)
+	}
+	reloads := make(chan *Config, 4)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go w.Run(ctx, func(c *Config) { reloads <- c }, func(error) {})
+
+	// Delete the watched file entirely, then recreate it later. A file-level
+	// watch would be permanently lost; the directory watch recovers.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	// Drain any reload that the delete may have triggered (Load would fail, so
+	// typically none) before writing the good config.
+	time.Sleep(300 * time.Millisecond)
+	for len(reloads) > 0 {
+		<-reloads
+	}
+	writeFile(t, path, good+"\n[[app]]\nhosts = [\"admin\"]\nupstream = \"http://127.0.0.1:9090\"\n")
+	select {
+	case c := <-reloads:
+		if len(c.Apps) != 2 {
+			t.Fatalf("reloaded config has %d apps, want 2", len(c.Apps))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("watcher did not observe the recreated file")
+	}
+}
+
+func TestWatcherFollowsSymlinkedConfig(t *testing.T) {
+	realDir := t.TempDir()
+	linkDir := t.TempDir()
+	real := filepath.Join(realDir, "hostmux.toml")
+	link := filepath.Join(linkDir, "hostmux.toml")
+	good := `
+domain = "example.com"
+[[app]]
+hosts = ["api"]
+upstream = "http://127.0.0.1:8080"
+`
+	writeFile(t, real, good)
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	w, err := NewWatcher(link)
+	if err != nil {
+		t.Fatalf("NewWatcher: %v", err)
+	}
+	reloads := make(chan *Config, 4)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go w.Run(ctx, func(c *Config) { reloads <- c }, func(error) {})
+
+	// In-place write to the real target (in a different directory than the
+	// symlink). A watch on the symlink's own directory would miss this.
+	writeFile(t, real, good+"\n[[app]]\nhosts = [\"admin\"]\nupstream = \"http://127.0.0.1:9090\"\n")
+	select {
+	case c := <-reloads:
+		if len(c.Apps) != 2 {
+			t.Fatalf("reloaded config has %d apps, want 2", len(c.Apps))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("watcher did not observe a write to the symlink target")
+	}
+}
+
+func TestLoadRejectsBadHTTPRedirect(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hostmux.toml")
+	writeFile(t, path, "http_redirect = \"not-a-listen-addr\"\n")
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected Load to reject a malformed http_redirect")
+	}
+}
+
+func TestLoadAcceptsHTTPRedirect(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hostmux.toml")
+	writeFile(t, path, "http_redirect = \":8080\"\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.HTTPRedirect != ":8080" {
+		t.Fatalf("HTTPRedirect = %q", cfg.HTTPRedirect)
 	}
 }

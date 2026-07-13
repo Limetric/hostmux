@@ -27,6 +27,47 @@ func TestAddAndLookup(t *testing.T) {
 	}
 }
 
+func TestLookupIsCaseAndTrailingDotInsensitive(t *testing.T) {
+	r := New()
+	if err := r.Add("config", []string{"API.Test"}, "http://127.0.0.1:8080"); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	// A route registered with mixed case and no trailing dot must match the
+	// lowercase form, an uppercase Host, and a trailing-dot Host.
+	for _, h := range []string{"api.test", "API.TEST", "api.test.", "Api.Test."} {
+		got, ok := r.Lookup(h)
+		if !ok {
+			t.Fatalf("Lookup(%q): expected hit", h)
+		}
+		if got != "http://127.0.0.1:8080" {
+			t.Fatalf("Lookup(%q) upstream = %q", h, got)
+		}
+	}
+}
+
+func TestReplaceSourceNormalizesHosts(t *testing.T) {
+	r := New()
+	if err := r.ReplaceSource("config", []Entry{
+		{Hosts: []string{"App.Localhost."}, Upstream: "http://127.0.0.1:3000"},
+	}); err != nil {
+		t.Fatalf("ReplaceSource: %v", err)
+	}
+	if _, ok := r.Lookup("app.localhost"); !ok {
+		t.Fatal("expected normalized host to be routable")
+	}
+}
+
+func TestReplaceSourceRejectsCaseInsensitiveDuplicate(t *testing.T) {
+	r := New()
+	err := r.ReplaceSource("config", []Entry{
+		{Hosts: []string{"a.test"}, Upstream: "http://127.0.0.1:1"},
+		{Hosts: []string{"A.TEST"}, Upstream: "http://127.0.0.1:2"},
+	})
+	if err == nil {
+		t.Fatal("expected duplicate error for case-variant hosts")
+	}
+}
+
 func TestAddMultiHostAtomicSuccess(t *testing.T) {
 	r := New()
 	if err := r.Add("socket:1", []string{"a.test", "b.test"}, "http://127.0.0.1:9000"); err != nil {

@@ -4,6 +4,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -451,5 +452,83 @@ func TestExposeRejectsSourceSpoofing(t *testing.T) {
 		if e.Source == "config" && len(e.Hosts) == 1 && e.Hosts[0] == "y.test" {
 			t.Fatal("manual route masqueraded as config source")
 		}
+	}
+}
+
+func TestRegisterRejectsInvalidUpstream(t *testing.T) {
+	path, r, _ := startServer(t)
+	c := dial(t, path)
+	defer c.Close()
+	enc := sockproto.NewEncoder(c)
+	dec := sockproto.NewDecoder(c)
+	if err := enc.Encode(&sockproto.Message{Op: sockproto.OpRegister, Hosts: []string{"a.test"}, Upstream: "ftp://evil/x"}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := dec.Decode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Ok {
+		t.Fatal("expected rejection of non-http upstream")
+	}
+	if r.Count() != 0 {
+		t.Fatalf("router should be empty, has %d hosts", r.Count())
+	}
+}
+
+func TestRegisterRejectsInvalidHost(t *testing.T) {
+	path, r, _ := startServer(t)
+	c := dial(t, path)
+	defer c.Close()
+	enc := sockproto.NewEncoder(c)
+	dec := sockproto.NewDecoder(c)
+	// A host containing a space/control chars is not a valid host token.
+	if err := enc.Encode(&sockproto.Message{Op: sockproto.OpRegister, Hosts: []string{"bad host"}, Upstream: "http://127.0.0.1:9000"}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := dec.Decode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Ok {
+		t.Fatal("expected rejection of invalid host")
+	}
+	if r.Count() != 0 {
+		t.Fatalf("router should be empty, has %d hosts", r.Count())
+	}
+}
+
+func TestExposeRejectsInvalidUpstream(t *testing.T) {
+	path, r, _ := startServer(t)
+	c := dial(t, path)
+	defer c.Close()
+	enc := sockproto.NewEncoder(c)
+	dec := sockproto.NewDecoder(c)
+	if err := enc.Encode(&sockproto.Message{Op: sockproto.OpExpose, Source: "api", Hosts: []string{"api.test"}, Upstream: "not-a-url"}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := dec.Decode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Ok {
+		t.Fatal("expected rejection of invalid expose upstream")
+	}
+	if r.Count() != 0 {
+		t.Fatalf("router should be empty, has %d hosts", r.Count())
+	}
+}
+
+func TestSocketFileIsOwnerOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix perms not applicable")
+	}
+	path, _, _ := startServer(t)
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
+		t.Fatalf("socket mode = %o, want owner-only (no group/other bits)", perm)
 	}
 }

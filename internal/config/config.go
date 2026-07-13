@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +24,9 @@ import (
 )
 
 const (
+	// DefaultTLSListen has no host, which hostmux binds to loopback only
+	// (both 127.0.0.1 and ::1) so dev servers are not exposed to the LAN.
+	// Set an explicit host (e.g. "0.0.0.0:8443") to serve the network.
 	DefaultTLSListen = ":8443"
 	// DefaultDomain is the base domain used to expand bare host labels in config
 	// when the domain field is omitted (e.g. "api" → "api.localhost").
@@ -31,15 +35,20 @@ const (
 
 // Config is the parsed TOML config file.
 type Config struct {
-	Listen    string      `toml:"listen"`
-	Socket    string      `toml:"socket"`
-	Domain    string      `toml:"domain"`
-	HidePort  bool        `toml:"hide_port"`
-	AccessLog bool        `toml:"access_log"`
-	LogFormat string      `toml:"log_format"`
-	TLS       *TLSBlock   `toml:"tls"`
-	Proxy     *ProxyBlock `toml:"proxy"`
-	Apps      []App       `toml:"app"`
+	Listen string `toml:"listen"`
+	Socket string `toml:"socket"`
+	Domain string `toml:"domain"`
+	// HTTPRedirect, when non-empty, is a plain-HTTP listen address (e.g.
+	// ":8080") on which the daemon serves 308 redirects to the HTTPS URL.
+	// Empty (default) disables the redirect listener. Applied at daemon start;
+	// changing it requires a restart (not hot-reloaded).
+	HTTPRedirect string      `toml:"http_redirect"`
+	HidePort     bool        `toml:"hide_port"`
+	AccessLog    bool        `toml:"access_log"`
+	LogFormat    string      `toml:"log_format"`
+	TLS          *TLSBlock   `toml:"tls"`
+	Proxy        *ProxyBlock `toml:"proxy"`
+	Apps         []App       `toml:"app"`
 }
 
 // Log format values accepted in `log_format`.
@@ -60,9 +69,11 @@ type TLSBlock struct {
 }
 
 // ProxyBlock holds optional hardening knobs for the proxy edge. All fields
-// default to zero, which preserves hostmux's prior behavior (Go's defaults):
-// no server-side timeouts, the standard upstream transport, and TLS
-// verification enabled for HTTPS upstreams.
+// are optional. When a field is unset, hostmux applies its own conservative
+// defaults for the server-side timeouts (ReadHeaderTimeout and IdleTimeout;
+// see the default* constants in proxytransport.go) and otherwise uses the
+// standard upstream transport with TLS verification enabled for HTTPS
+// upstreams. A non-zero value here overrides the corresponding default.
 type ProxyBlock struct {
 	// ReadHeaderTimeout bounds how long the server waits for request
 	// headers. Mitigates slow-header (Slowloris) clients. Server-side.
@@ -164,6 +175,11 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: tls.listen: %w", err)
 		}
 	}
+	if c.HTTPRedirect != "" {
+		if err := ValidateListenAddr(c.HTTPRedirect); err != nil {
+			return fmt.Errorf("config: http_redirect: %w", err)
+		}
+	}
 	if c.Proxy != nil {
 		p := c.Proxy
 		for name, d := range map[string]Duration{
@@ -180,6 +196,17 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: proxy.max_header_bytes must not be negative")
 		}
 	}
+	// TLS cert/key must be set together or not at all; otherwise the daemon
+	// fails deep in tlsconfig.EnsurePair ("partial tls state") after a
+	// detached start has already timed out with a generic error.
+	if c.TLS != nil && (c.TLS.Cert != "") != (c.TLS.Key != "") {
+		return fmt.Errorf("config: tls: set both cert and key, or neither (cert=%q key=%q)", c.TLS.Cert, c.TLS.Key)
+	}
+	// Duplicate hostnames across apps are rejected by router.ReplaceSource at
+	// startup; catch them here so Load fails fast with a precise message
+	// instead of the daemon dying and the caller seeing only a socket timeout.
+	// Match the router's case/trailing-dot-insensitive key.
+	seenHost := make(map[string]int)
 	for i, app := range c.Apps {
 		if len(app.Hosts) == 0 {
 			return fmt.Errorf("config: app[%d]: hosts must be non-empty", i)
@@ -188,6 +215,11 @@ func (c *Config) validate() error {
 			if !hostnames.ValidHostToken(host) {
 				return fmt.Errorf("config: app[%d]: hosts[%d]: must be a valid hostname", i, j)
 			}
+			key := strings.ToLower(strings.TrimSuffix(host, "."))
+			if first, dup := seenHost[key]; dup {
+				return fmt.Errorf("config: duplicate host %q in app[%d] (already used by app[%d])", host, i, first)
+			}
+			seenHost[key] = i
 		}
 		if app.Upstream == "" {
 			return fmt.Errorf("config: app[%d]: upstream must be non-empty", i)
@@ -293,6 +325,11 @@ func Check(path string) (*Config, []Diagnostic) {
 			add(SeverityError, "tls.listen: %v", err)
 		}
 	}
+	if cfg.HTTPRedirect != "" {
+		if err := ValidateListenAddr(cfg.HTTPRedirect); err != nil {
+			add(SeverityError, "http_redirect: %v", err)
+		}
+	}
 
 	switch cfg.LogFormat {
 	case "", LogFormatText, LogFormatJSON:
@@ -340,10 +377,13 @@ func Check(path string) (*Config, []Diagnostic) {
 				add(SeverityError, "app[%d].hosts[%d]: %q is not a valid hostname", i, j, host)
 				continue
 			}
-			if first, dup := seenHost[host]; dup {
+			// Key by the router-normalized form so `config check` flags the
+			// same collisions the daemon rejects at load (e.g. api vs API).
+			key := strings.ToLower(strings.TrimSuffix(host, "."))
+			if first, dup := seenHost[key]; dup {
 				add(SeverityError, "duplicate host %q in app[%d] (already used by app[%d])", host, i, first)
 			} else {
-				seenHost[host] = i
+				seenHost[key] = i
 			}
 		}
 		if app.Upstream == "" {
@@ -378,29 +418,47 @@ func effectiveTLSListen(c *Config) string {
 // a channel. Reload events are debounced (200ms) so a multi-write save shows
 // up as one event.
 type Watcher struct {
-	path string
-	w    *fsnotify.Watcher
+	path string // path to Load from (may be a symlink)
+	// watchName is the cleaned, symlink-resolved path used to filter directory
+	// events. Resolving the symlink means we watch the real file's directory,
+	// so in-place writes to a config that lives elsewhere are still observed.
+	watchName string
+	w         *fsnotify.Watcher
 
 	mu      sync.Mutex
 	current *Config
 }
 
-// NewWatcher starts a fsnotify watch on path and returns a Watcher with the
+// NewWatcher starts a fsnotify watch for path and returns a Watcher with the
 // initial Config already loaded. The caller should call Run on a goroutine.
+//
+// The watch is placed on the containing DIRECTORY, not the file itself.
+// Atomic-save editors (vim, IntelliJ) and delete-then-recreate save styles
+// replace the file via rename, which would detach a file-level watch from the
+// original inode and silently stop future reloads. A directory watch survives
+// inode changes; Run filters events down to our filename.
 func NewWatcher(path string) (*Watcher, error) {
+	path = filepath.Clean(path)
 	cfg, err := Load(path)
 	if err != nil {
 		return nil, err
+	}
+	// Resolve symlinks so we watch the real file's directory. Fall back to the
+	// literal path if resolution fails (e.g. a broken link, which Load would
+	// already have rejected above).
+	watchName := path
+	if resolved, rerr := filepath.EvalSymlinks(path); rerr == nil {
+		watchName = filepath.Clean(resolved)
 	}
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
 	}
-	if err := w.Add(path); err != nil {
+	if err := w.Add(filepath.Dir(watchName)); err != nil {
 		w.Close()
 		return nil, err
 	}
-	return &Watcher{path: path, w: w, current: cfg}, nil
+	return &Watcher{path: path, watchName: watchName, w: w, current: cfg}, nil
 }
 
 // Current returns the most recently loaded Config.
@@ -416,6 +474,13 @@ func (w *Watcher) Current() *Config {
 func (w *Watcher) Run(ctx context.Context, onReload func(*Config), onError func(error)) {
 	defer w.w.Close()
 	var debounce *time.Timer
+	// Stop any pending debounce when Run exits so a reload cannot fire after
+	// the daemon has begun shutting down.
+	defer func() {
+		if debounce != nil {
+			debounce.Stop()
+		}
+	}()
 	for {
 		select {
 		case <-ctx.Done():
@@ -424,13 +489,23 @@ func (w *Watcher) Run(ctx context.Context, onReload func(*Config), onError func(
 			if !ok {
 				return
 			}
-			if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) == 0 {
+			// The watch is on the directory, so filter to our config file.
+			if filepath.Clean(ev.Name) != w.watchName {
+				continue
+			}
+			if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename|fsnotify.Remove) == 0 {
 				continue
 			}
 			if debounce != nil {
 				debounce.Stop()
 			}
 			debounce = time.AfterFunc(200*time.Millisecond, func() {
+				// Skip work if the daemon has begun shutting down: a timer that
+				// already fired won't be cancelled by the deferred Stop, so
+				// guard here to avoid reloading during teardown.
+				if ctx.Err() != nil {
+					return
+				}
 				cfg, err := Load(w.path)
 				if err != nil {
 					if onError != nil {
@@ -441,12 +516,9 @@ func (w *Watcher) Run(ctx context.Context, onReload func(*Config), onError func(
 				w.mu.Lock()
 				w.current = cfg
 				w.mu.Unlock()
-				// Re-add the watch — atomic-save editors (vim, IntelliJ) replace the
-				// file via rename, which detaches the inotify/kqueue watch from the
-				// original inode. Re-adding the path ensures we keep getting events
-				// for subsequent saves.
-				_ = w.w.Remove(w.path)
-				_ = w.w.Add(w.path)
+				if ctx.Err() != nil {
+					return
+				}
 				if onReload != nil {
 					onReload(cfg)
 				}

@@ -74,6 +74,11 @@ hostmux doctor
 # Validate the config file without starting the daemon.
 hostmux config check
 
+# Tail the background daemon's log (access/proxy logs, startup errors).
+hostmux logs            # print ~/.hostmux/hostmux.log
+hostmux logs -f         # follow new lines
+hostmux logs -n 100     # last 100 lines
+
 # Stop the daemon.
 hostmux stop
 ```
@@ -117,7 +122,15 @@ hostmux unexpose api
 
 Exposed routes persist until you `unexpose` them (or the daemon restarts),
 appear in `hostmux routes` under a `manual:NAME` source, and accept the same
-`--domain` / `--label` options as `run`. The first `--name` is the route's
+`--domain` / `--label` options as `run`. Add `--persist` to also append the
+route to your config file (validated and written atomically) so it is restored
+on the next daemon start:
+
+```sh
+hostmux expose --name api --upstream http://127.0.0.1:3000 --persist
+```
+
+The first `--name` is the route's
 identifier for `unexpose`.
 
 ## Sharing a route
@@ -307,6 +320,11 @@ domain = "example.com"
 
 [tls]
 listen = ":8443"
+# A listen address without a host (":8443") binds loopback only — both
+# 127.0.0.1 and ::1 — so your dev servers are not reachable from the LAN.
+# cloudflared connects over loopback, so the tunnel workflow is unaffected.
+# To serve the local network directly (e.g. a phone on the same Wi-Fi
+# without a tunnel), set an explicit host: listen = "0.0.0.0:8443".
 # Optional: override the managed self-signed certificate paths.
 # cert = "~/certs/hostmux.crt"
 # key = "~/certs/hostmux.key"
@@ -320,16 +338,34 @@ hosts = ["admin", "myapp.example.org"]
 upstream = "http://127.0.0.1:9000"
 ```
 
+### Optional HTTP→HTTPS redirect
+
+hostmux serves HTTPS only. Set `http_redirect` to a plain-HTTP listen address
+and hostmux answers every request there with a `308` redirect to the matching
+HTTPS URL (preserving path, query, and method), so `http://app.example.com`
+lands on `https://app.example.com`:
+
+```toml
+http_redirect = ":8080"   # empty/omitted disables the redirect listener
+```
+
+Like the main listener, an address without a host binds loopback only; set an
+explicit host (e.g. `0.0.0.0:8080`) to answer redirects on the LAN. This
+setting is applied at daemon start; unlike routes, changing it requires a
+restart.
+
 Run with `hostmux start --config /path/to/hostmux.toml`. The file is hot-reloaded on save.
 
 ## Proxy hardening
 
-By default hostmux uses Go's standard server and transport settings, which
-suit local development. When hostmux fronts apps over a tunnel you can opt
-into stricter limits with a `[proxy]` block. Every field is optional and
-defaults to Go's behavior, so existing configs are unaffected. Note: the
-`[proxy]` block is applied at daemon start, so changes require a restart
-(it is not hot-reloaded like routes).
+hostmux applies conservative server-side defaults out of the box — a
+`read_header_timeout` of `10s` and an `idle_timeout` of `120s` (anti-Slowloris)
+— and otherwise uses Go's standard transport settings, which suit local
+development. When hostmux fronts apps over a tunnel you can tighten or relax
+these limits with a `[proxy]` block. Every field is optional; a value here
+overrides the corresponding default. Note: the `[proxy]` block is applied at
+daemon start, so changes require a restart (it is not hot-reloaded like
+routes).
 
 ```toml
 [proxy]

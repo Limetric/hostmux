@@ -18,6 +18,11 @@ type exposeOptions struct {
 	Upstream   string
 	Names      []string
 	Labels     []string
+	// Persist, when true, also appends the route to the config file so it is
+	// restored when the daemon restarts. ConfigPath overrides the default
+	// config location.
+	Persist    bool
+	ConfigPath string
 	Writer     interface{ Write([]byte) (int, error) }
 }
 
@@ -98,6 +103,15 @@ func runExpose(opts exposeOptions) error {
 		fmt.Fprintf(w, "%s → %s\n", formatPublicURL(h, scheme, daemonPort), opts.Upstream)
 	}
 	fmt.Fprintf(w, "exposed %q (remove with: hostmux unexpose %s)\n", routeName, routeName)
+
+	if opts.Persist {
+		written, perr := persistExposedRoute(opts.ConfigPath, hosts, opts.Upstream, labels)
+		if perr != nil {
+			// The live route is already registered; only persistence failed.
+			return exitError{code: 1, text: fmt.Sprintf("hostmux expose: route is live but --persist failed: %v", perr)}
+		}
+		fmt.Fprintf(w, "persisted to %s (takes over from the live route when the daemon restarts with this config)\n", written)
+	}
 	return nil
 }
 

@@ -95,3 +95,14 @@ func TestInitRejectsBadListen(t *testing.T) {
 		t.Fatal("expected error for invalid --listen")
 	}
 }
+
+func TestInitRejectsMalformedDomain(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hostmux.toml")
+	err := runInit(initOptions{ConfigPath: path, Domain: "bad\"domain", Listen: ":8443", Writer: &bytes.Buffer{}})
+	if err == nil {
+		t.Fatal("expected error for malformed domain")
+	}
+	if _, statErr := os.Stat(path); statErr == nil {
+		t.Fatal("config file should not have been written for a bad domain")
+	}
+}

@@ -80,6 +80,12 @@ func runCloudflareConfig(opts cloudflareOptions) error {
 	if domain == "" {
 		return exitError{code: 2, text: "hostmux cloudflare: no domain configured; set `domain` in config or pass --domain"}
 	}
+	// Validate before interpolating into the YAML snippet: a domain with a
+	// quote or newline could otherwise inject arbitrary ingress rules into
+	// the block the user copies into cloudflared.
+	if !hostnames.ValidHostToken(domain) {
+		return exitError{code: 2, text: fmt.Sprintf("hostmux cloudflare: invalid domain %q", domain)}
+	}
 
 	// Service port: the real local listener. The config is authoritative
 	// (the daemon hides its real port when hide_port is set), so prefer it.

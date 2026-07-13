@@ -79,3 +79,20 @@ func TestCloudflareConfigRequiresDomain(t *testing.T) {
 		t.Fatalf("expected localhost default:\n%s", buf.String())
 	}
 }
+
+func TestCloudflareConfigRejectsMalformedDomain(t *testing.T) {
+	var buf bytes.Buffer
+	// A domain containing a newline + injected YAML must be rejected, not
+	// rendered into the ingress block.
+	err := runCloudflareConfig(cloudflareOptions{
+		SocketPath: "/nonexistent/hm.sock",
+		Domain:     "evil.com\n  - hostname: attacker.test",
+		Writer:     &buf,
+	})
+	if err == nil {
+		t.Fatal("expected error for malformed domain")
+	}
+	if strings.Contains(buf.String(), "attacker.test") {
+		t.Fatalf("injected YAML leaked into output:\n%s", buf.String())
+	}
+}

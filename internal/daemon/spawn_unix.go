@@ -25,7 +25,7 @@ func SpawnDetached(args ...string) error {
 	if err := os.MkdirAll(hostmuxDir, 0o755); err != nil {
 		return err
 	}
-	logPath := filepath.Join(hostmuxDir, "hostmux.log")
+	logPath := filepath.Join(hostmuxDir, LogFileName)
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return err

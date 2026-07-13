@@ -122,7 +122,13 @@ func runForegroundDaemon(opts startOptions) error {
 		return fmt.Errorf("hostmux start: sockpath: %w", err)
 	}
 	if dir := filepath.Dir(sockPath); dir != "" {
-		_ = os.MkdirAll(dir, 0o755)
+		// 0o700 so a directory hostmux creates for the control socket (e.g.
+		// ~/.hostmux) is owner-only. We deliberately do NOT Chmod a
+		// pre-existing directory: the socket path can be overridden to an
+		// arbitrary location (e.g. /tmp), and tightening a shared directory
+		// would be destructive. Owner-only access is enforced regardless by
+		// the socket's 0600 mode and the per-connection peer-UID check.
+		_ = os.MkdirAll(dir, 0o700)
 	}
 
 	// Acquire the PID-file flock for this socket path. The PID file lives
@@ -169,7 +175,7 @@ func runForegroundDaemon(opts startOptions) error {
 	// tlsCfg is constructed unconditionally above so no nil guard is needed
 	// today; if a plain-only mode is added later, that change should make
 	// tlsCfg conditional and re-add the guard.
-	tlsLn, lerr := net.Listen("tcp", tlsCfg.Listen)
+	tlsLns, lerr := bindPublicListeners(tlsCfg.Listen)
 	if lerr != nil {
 		if p, perr := extractListenPort(tlsCfg.Listen); perr == nil {
 			// hint is already a fully-formatted line; log.Println prints
@@ -181,14 +187,18 @@ func runForegroundDaemon(opts startOptions) error {
 		}
 		return fmt.Errorf("hostmux start: listener: bind %s: %w", tlsCfg.Listen, lerr)
 	}
-	tlsCfg.Listen = tlsLn.Addr().String()
-	// tlsLn.Addr().String() is a canonical host:port produced by the
+	// tlsLns[0] is the primary listener; its resolved address determines the
+	// advertised port (it also resolves any ":0" request).
+	tlsCfg.Listen = tlsLns[0].Addr().String()
+	// tlsLns[0].Addr().String() is a canonical host:port produced by the
 	// standard library, so extractListenPort cannot fail on it in
 	// practice. Treat any error as a hard failure rather than silently
 	// reporting PublicPort=0, which would misrepresent URLs to clients.
 	publicPort, perr := extractListenPort(tlsCfg.Listen)
 	if perr != nil {
-		tlsLn.Close()
+		for _, ln := range tlsLns {
+			ln.Close()
+		}
 		return fmt.Errorf("hostmux start: parse resolved listen %q: %w", tlsCfg.Listen, perr)
 	}
 
@@ -212,12 +222,40 @@ func runForegroundDaemon(opts startOptions) error {
 	lc := listener.Config{TLS: tlsCfg, Server: serverOptions(proxyBlock)}
 	servers, err := listener.Build(lc, handler)
 	if err != nil {
-		tlsLn.Close()
+		for _, ln := range tlsLns {
+			ln.Close()
+		}
 		return fmt.Errorf("hostmux start: listener: %w", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	hidePort := cfg != nil && cfg.HidePort
+
+	// Optional HTTP->HTTPS redirect listener. Bound before httpErrCh so the
+	// channel is sized for its goroutines too.
+	var redirectSrv *http.Server
+	var redirectLns []net.Listener
+	if cfg != nil && cfg.HTTPRedirect != "" {
+		var rerr error
+		redirectLns, rerr = bindPublicListeners(cfg.HTTPRedirect)
+		if rerr != nil {
+			for _, ln := range tlsLns {
+				ln.Close()
+			}
+			return fmt.Errorf("hostmux start: http_redirect listener: bind %s: %w", cfg.HTTPRedirect, rerr)
+		}
+		redirectSrv = &http.Server{Handler: newHTTPSRedirectHandler(publicPort, hidePort)}
+		// Apply the same server-side limits (timeouts, max header bytes) as the
+		// main listener so the redirect endpoint is equally hardened.
+		o := serverOptions(proxyBlock)
+		redirectSrv.ReadHeaderTimeout = o.ReadHeaderTimeout
+		redirectSrv.IdleTimeout = o.IdleTimeout
+		if o.MaxHeaderBytes > 0 {
+			redirectSrv.MaxHeaderBytes = o.MaxHeaderBytes
+		}
+	}
 
 	// Start HTTP servers. The TLS TCP listener was already bound above so
 	// PublicPort is known before we accept any clients; hand it directly
@@ -226,18 +264,20 @@ func runForegroundDaemon(opts startOptions) error {
 	// up so enabling one later is a config-only change. Errors are
 	// surfaced via httpErrCh so the foreground caller sees startup
 	// failures instead of treating them as a clean shutdown.
-	httpErrCh := make(chan error, 2)
+	httpErrCh := make(chan error, len(tlsLns)+len(redirectLns)+1)
 	if servers.TLS != nil {
 		tlsSrv := servers.TLS
-		ln := tlsLn
-		go func() {
-			serr := tlsSrv.ServeTLS(ln, tlsCfg.CertFile, tlsCfg.KeyFile)
-			if serr != nil && serr != http.ErrServerClosed {
-				log.Printf("http server: %v", serr)
-				httpErrCh <- serr
-				cancel()
-			}
-		}()
+		for _, ln := range tlsLns {
+			ln := ln
+			go func() {
+				serr := tlsSrv.ServeTLS(ln, tlsCfg.CertFile, tlsCfg.KeyFile)
+				if serr != nil && serr != http.ErrServerClosed {
+					log.Printf("http server: %v", serr)
+					httpErrCh <- serr
+					cancel()
+				}
+			}()
+		}
 	}
 	if servers.Plain != nil {
 		plainSrv := servers.Plain
@@ -250,13 +290,34 @@ func runForegroundDaemon(opts startOptions) error {
 			}
 		}()
 	}
-	log.Printf("hostmux start: TLS listening on %s", tlsCfg.Listen)
+	if redirectSrv != nil {
+		for _, ln := range redirectLns {
+			ln := ln
+			go func() {
+				serr := redirectSrv.Serve(ln)
+				if serr != nil && serr != http.ErrServerClosed {
+					log.Printf("http redirect server: %v", serr)
+					httpErrCh <- serr
+					cancel()
+				}
+			}()
+		}
+		log.Printf("hostmux start: HTTP->HTTPS redirect listening on %s", redirectLns[0].Addr().String())
+	}
+	if len(tlsLns) > 1 {
+		addrs := make([]string, len(tlsLns))
+		for i, ln := range tlsLns {
+			addrs[i] = ln.Addr().String()
+		}
+		log.Printf("hostmux start: TLS listening on %s (loopback only; set an explicit host such as 0.0.0.0 to serve the LAN)", strings.Join(addrs, ", "))
+	} else {
+		log.Printf("hostmux start: TLS listening on %s", tlsCfg.Listen)
+	}
 	if generatedTLS {
 		log.Printf("hostmux start: generated self-signed cert at %s and %s", tlsCfg.CertFile, tlsCfg.KeyFile)
 	}
 
 	// Unix socket server.
-	hidePort := cfg != nil && cfg.HidePort
 	if hidePort {
 		log.Printf("hostmux start: hide_port set; public URLs will omit the listener port")
 	}
@@ -279,6 +340,18 @@ func runForegroundDaemon(opts startOptions) error {
 		defer shutdownCancel()
 		for _, srv := range servers.All() {
 			_ = srv.Shutdown(shutdownCtx)
+		}
+		if redirectSrv != nil {
+			_ = redirectSrv.Shutdown(shutdownCtx)
+		}
+		// Explicitly close every bound listener too: a ServeTLS goroutine may
+		// not have registered its listener with the server yet, so Shutdown
+		// alone could leave one open.
+		for _, ln := range tlsLns {
+			_ = ln.Close()
+		}
+		for _, ln := range redirectLns {
+			_ = ln.Close()
 		}
 		return fmt.Errorf("hostmux start: sockserver: %w", err)
 	}
@@ -328,6 +401,18 @@ func runForegroundDaemon(opts startOptions) error {
 	defer shutdownCancel()
 	for _, srv := range servers.All() {
 		_ = srv.Shutdown(shutdownCtx)
+	}
+	if redirectSrv != nil {
+		_ = redirectSrv.Shutdown(shutdownCtx)
+	}
+	// Also close the raw listeners directly. http.Server.Shutdown only closes
+	// listeners the server registered; if ServeTLS failed during setup (e.g. a
+	// cert-load error) before registering one, Shutdown would leave it bound.
+	for _, ln := range tlsLns {
+		_ = ln.Close()
+	}
+	for _, ln := range redirectLns {
+		_ = ln.Close()
 	}
 	_ = sockSrv.Close()
 	_ = sockpath.RemoveDiscovery()
@@ -451,6 +536,48 @@ func readConfigDomain(path string) (string, error) {
 		return "", err
 	}
 	return hostnames.NormalizeDomain(raw.Domain), nil
+}
+
+// bindPublicListeners binds the public TLS TCP listener(s) for the given
+// listen address. When the address specifies a host (e.g. "0.0.0.0:8443" or
+// "192.168.1.10:8443"), that address is honored verbatim as a single
+// listener — this is how a user opts into serving the LAN. When no host is
+// given (the default ":8443"), it binds loopback only, on BOTH 127.0.0.1 and
+// ::1, so the *.localhost workflow keeps working on platforms that resolve it
+// to IPv6 loopback (macOS) without exposing loopback-only dev servers to the
+// network. The first returned listener is the primary (its resolved port is
+// advertised). A failure to bind IPv6 loopback is logged but not fatal.
+func bindPublicListeners(listenAddr string) ([]net.Listener, error) {
+	host, port, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		return nil, err
+	}
+	if host != "" {
+		ln, lerr := net.Listen("tcp", listenAddr)
+		if lerr != nil {
+			return nil, lerr
+		}
+		return []net.Listener{ln}, nil
+	}
+
+	ln4, lerr := net.Listen("tcp", net.JoinHostPort("127.0.0.1", port))
+	if lerr != nil {
+		return nil, lerr
+	}
+	lns := []net.Listener{ln4}
+
+	// Reuse the actually-bound port so a ":0" request lands on the same port
+	// for both address families.
+	boundPort := port
+	if _, p, perr := net.SplitHostPort(ln4.Addr().String()); perr == nil {
+		boundPort = p
+	}
+	ln6, lerr := net.Listen("tcp", net.JoinHostPort("::1", boundPort))
+	if lerr != nil {
+		log.Printf("hostmux start: IPv6 loopback bind failed (%v); serving on 127.0.0.1 only", lerr)
+		return lns, nil
+	}
+	return append(lns, ln6), nil
 }
 
 // acquirePIDLock attempts to take an exclusive flock on the PID file. It

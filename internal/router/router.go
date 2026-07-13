@@ -4,9 +4,29 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
+
+// normalizeHost canonicalizes a hostname for use as a routing key. DNS is
+// case-insensitive and permits a trailing root dot, so both the registered
+// hosts and the incoming Host header are lowercased and stripped of a
+// trailing dot. Without this, `API.localhost` or `app.localhost.` would fail
+// to match a route registered as `api.localhost`.
+func normalizeHost(h string) string {
+	h = strings.TrimSpace(h)
+	h = strings.TrimSuffix(h, ".")
+	return strings.ToLower(h)
+}
+
+func normalizeHosts(in []string) []string {
+	out := make([]string, len(in))
+	for i, h := range in {
+		out[i] = normalizeHost(h)
+	}
+	return out
+}
 
 // Entry is a snapshot view of one registration in the routing table.
 // It is used by Snapshot and ReplaceSource. The Source field is informational
@@ -74,7 +94,7 @@ func (r *Router) Lookup(host string) (string, bool) {
 func (r *Router) LookupSource(host string) (upstream, source string, ok bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	e, ok := r.byHost[host]
+	e, ok := r.byHost[normalizeHost(host)]
 	if !ok {
 		return "", "", false
 	}
@@ -102,23 +122,24 @@ func (r *Router) AddEntry(in Entry) error {
 	if in.Upstream == "" {
 		return fmt.Errorf("router: upstream must be non-empty")
 	}
+	hosts := normalizeHosts(in.Hosts)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, h := range in.Hosts {
+	for _, h := range hosts {
 		if existing, ok := r.byHost[h]; ok && existing.source != in.Source {
 			return fmt.Errorf("router: host %q already registered by %q", h, existing.source)
 		}
 	}
 	// Drop any existing same-source entries that contain these hosts so we
 	// can rebuild with the new upstream cleanly.
-	for _, h := range in.Hosts {
+	for _, h := range hosts {
 		if existing, ok := r.byHost[h]; ok && existing.source == in.Source {
 			r.removeEntryLocked(existing)
 		}
 	}
 	e := &entry{
 		source:       in.Source,
-		hosts:        append([]string(nil), in.Hosts...),
+		hosts:        hosts,
 		upstream:     in.Upstream,
 		labels:       copyLabels(in.Labels),
 		pid:          in.PID,
@@ -126,7 +147,7 @@ func (r *Router) AddEntry(in Entry) error {
 		cwd:          in.Cwd,
 		registeredAt: r.now(),
 	}
-	for _, h := range in.Hosts {
+	for _, h := range hosts {
 		r.byHost[h] = e
 	}
 	r.bySource[in.Source] = append(r.bySource[in.Source], e)
@@ -183,15 +204,19 @@ func (r *Router) ReplaceSource(source string, newEntries []Entry) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	// Normalize each entry's hosts up front so duplicate detection, collision
+	// checks, and the stored keys all use the canonical form.
+	normed := make([][]string, len(newEntries))
 	seen := make(map[string]bool)
-	for _, ne := range newEntries {
+	for i, ne := range newEntries {
 		if len(ne.Hosts) == 0 {
 			return fmt.Errorf("router: entry with empty hosts")
 		}
 		if ne.Upstream == "" {
 			return fmt.Errorf("router: entry with empty upstream")
 		}
-		for _, h := range ne.Hosts {
+		normed[i] = normalizeHosts(ne.Hosts)
+		for _, h := range normed[i] {
 			if seen[h] {
 				return fmt.Errorf("router: duplicate host %q in new entries", h)
 			}
@@ -214,10 +239,10 @@ func (r *Router) ReplaceSource(source string, newEntries []Entry) error {
 	}
 	delete(r.bySource, source)
 	now := r.now()
-	for _, ne := range newEntries {
+	for i, ne := range newEntries {
 		e := &entry{
 			source:       source,
-			hosts:        append([]string(nil), ne.Hosts...),
+			hosts:        normed[i],
 			upstream:     ne.Upstream,
 			labels:       copyLabels(ne.Labels),
 			pid:          ne.PID,
@@ -225,7 +250,7 @@ func (r *Router) ReplaceSource(source string, newEntries []Entry) error {
 			cwd:          ne.Cwd,
 			registeredAt: now,
 		}
-		for _, h := range ne.Hosts {
+		for _, h := range normed[i] {
 			r.byHost[h] = e
 		}
 		r.bySource[source] = append(r.bySource[source], e)
