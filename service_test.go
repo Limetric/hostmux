@@ -7,7 +7,21 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Limetric/hostmux/internal/service"
 )
+
+// execStartLine returns the ExecStart= line SystemdUnit renders for bin, so
+// assertions match the product's own quoting/escaping instead of a hardcoded
+// literal (a Windows t.TempDir() path has backslashes that get quoted).
+func execStartLine(bin string) string {
+	for _, ln := range strings.Split(service.SystemdUnit(service.Params{BinPath: bin}), "\n") {
+		if strings.HasPrefix(ln, "ExecStart=") {
+			return ln
+		}
+	}
+	return ""
+}
 
 // fakeService wires the service seams to a temp home, fake binary, and a
 // recording runner, and restores them after the test. The returned bin path
@@ -62,8 +76,8 @@ func TestServiceInstallLinux(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unit not written: %v", err)
 	}
-	if !strings.Contains(string(body), "ExecStart="+bin+" start --foreground") {
-		t.Fatalf("unit ExecStart wrong (bin %q):\n%s", bin, body)
+	if want := execStartLine(bin); want == "" || !strings.Contains(string(body), want) {
+		t.Fatalf("unit ExecStart wrong (bin %q, want %q):\n%s", bin, want, body)
 	}
 	if !containsCall(*calls, "systemctl --user daemon-reload") || !containsCall(*calls, "systemctl --user enable --now hostmux.service") {
 		t.Fatalf("expected systemctl calls, got %v", *calls)
